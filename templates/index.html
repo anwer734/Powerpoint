@@ -420,10 +420,55 @@
     <!-- Tab: Learning Bot -->
     <div id="tab-learning" class="tab-content">
         <div class="card">
-            <div class="card-header"><div class="card-icon" style="background:rgba(88,101,242,.15);color:var(--primary)"><i class="fas fa-robot"></i></div><div><h3>البوت التعليمي الذكي</h3><p>يتعلم الخدمات ويرد على الطلبات في الخاص</p></div><div class="toggle-container" style="margin-right:auto;display:flex;gap:12px;align-items:center"><div><span id="learningReplyGroupsText" style="font-size:12px">الرد في المجموعات: معطل</span><div id="learningReplyGroupsToggle" class="toggle" onclick="toggleReplyInGroups()"></div></div><div><span id="learningStatusText" style="font-size:12px">متوقف</span><div id="learningToggle" class="toggle" onclick="toggleLearningBot()"></div></div></div></div>
+            <!-- رأس البطاقة مع مفاتيح التفعيل -->
+            <div class="card-header">
+                <div class="card-icon" style="background:rgba(88,101,242,.15);color:var(--primary)"><i class="fas fa-robot"></i></div>
+                <div><h3>البوت التعليمي الذكي</h3><p>يرصد الكلمات في المجموعات ويرد بحوار متعدد المراحل في الخاص</p></div>
+                <div class="toggle-container" style="margin-right:auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <span id="learningReplyGroupsText" style="font-size:12px">الرد في المجموعات: معطل</span>
+                        <div id="learningReplyGroupsToggle" class="toggle" onclick="toggleReplyInGroups()"></div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <span id="learningStatusText" style="font-size:12px;color:var(--danger)">⏹ متوقف</span>
+                        <div id="learningToggle" class="toggle" onclick="toggleLearningBot()"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- الجلسات النشطة -->
+            <div style="background:var(--bg-input);border-radius:12px;padding:14px;margin-bottom:16px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                    <h4 style="margin:0;font-size:14px"><i class="fas fa-comments" style="color:var(--accent)"></i> الجلسات النشطة حالياً</h4>
+                    <span id="activeSessionsCount" style="font-size:12px;color:var(--text-muted)">0 جلسة</span>
+                </div>
+                <div id="activeSessionsList" style="font-size:13px;color:var(--text-muted);text-align:center;padding:8px">لا توجد جلسات نشطة</div>
+            </div>
+
+            <!-- قسمان: الكلمات المراقبة + الطلبات الغير معروفة -->
             <div class="grid-2">
-                <div><div class="card-header" style="border-bottom:none;padding-bottom:0"><div class="card-icon" style="background:rgba(0,212,170,.15);color:var(--accent)"><i class="fas fa-book"></i></div><div><h4>الخدمات المتاحة</h4><p>الخدمات التي يعرفها البوت حالياً</p></div><button class="btn btn-primary btn-sm" onclick="showAddServiceModal()" style="margin-right:auto"><i class="fas fa-plus"></i> إضافة خدمة</button></div><div id="servicesList" style="max-height:300px;overflow-y:auto;margin-top:10px"><div style="text-align:center;padding:20px"><div class="spinner"></div> جاري التحميل...</div></div></div>
-                <div><div class="card-header" style="border-bottom:none;padding-bottom:0"><div class="card-icon" style="background:rgba(237,66,69,.15);color:var(--danger)"><i class="fas fa-question-circle"></i></div><div><h4>طلبات غير معروفة</h4><p>طلبات لم يفهمها البوت</p></div><button class="btn btn-secondary btn-sm" onclick="clearUnknownRequests()" style="margin-right:auto"><i class="fas fa-trash"></i> مسح الكل</button></div><div id="unknownRequestsList" style="max-height:300px;overflow-y:auto;margin-top:10px"><div style="text-align:center;padding:20px"><div class="spinner"></div> جاري التحميل...</div></div></div>
+                <!-- الكلمات المراقبة -->
+                <div>
+                    <div class="card-header" style="border-bottom:none;padding-bottom:0">
+                        <div class="card-icon" style="background:rgba(0,212,170,.15);color:var(--accent)"><i class="fas fa-key"></i></div>
+                        <div><h4>كلمات المراقبة</h4><p>يرصدها البوت ويرد تلقائياً</p></div>
+                        <button class="btn btn-primary btn-sm" onclick="showAddKeywordModal()" style="margin-right:auto"><i class="fas fa-plus"></i> إضافة</button>
+                    </div>
+                    <div id="keywordsList" style="max-height:320px;overflow-y:auto;margin-top:10px">
+                        <div style="text-align:center;padding:20px"><div class="spinner"></div></div>
+                    </div>
+                </div>
+                <!-- الطلبات الغير معروفة -->
+                <div>
+                    <div class="card-header" style="border-bottom:none;padding-bottom:0">
+                        <div class="card-icon" style="background:rgba(237,66,69,.15);color:var(--danger)"><i class="fas fa-question-circle"></i></div>
+                        <div><h4>طلبات غير معروفة</h4><p>طلبات لم يفهمها البوت بعد</p></div>
+                        <button class="btn btn-secondary btn-sm" onclick="clearUnknownRequests()" style="margin-right:auto"><i class="fas fa-trash"></i> مسح</button>
+                    </div>
+                    <div id="unknownRequestsList" style="max-height:320px;overflow-y:auto;margin-top:10px">
+                        <div style="text-align:center;padding:20px"><div class="spinner"></div></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -469,6 +514,36 @@
 
 <!-- Modals for learning -->
 <div id="addServiceModal" class="modal-overlay"><div class="modal"><div class="modal-header"><h3>➕ إضافة خدمة جديدة</h3><button class="modal-close" onclick="closeAddServiceModal()">✕</button></div><div class="form-group"><label class="form-label">اسم الخدمة</label><input id="newServiceName" class="form-input" placeholder="مثال: تصميم شعار"></div><div class="form-group"><label class="form-label">وصف الخدمة</label><textarea id="newServiceDesc" class="form-input" rows="3" placeholder="مثال: تصميم شعارات احترافية"></textarea></div><button class="btn btn-primary btn-lg" onclick="addNewService()">حفظ الخدمة</button></div></div>
+
+<!-- Modal: إضافة كلمة مراقبة جديدة -->
+<div id="addKeywordModal" class="modal-overlay">
+    <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+            <h3><i class="fas fa-key"></i> إضافة كلمة مراقبة</h3>
+            <button class="modal-close" onclick="closeAddKeywordModal()">✕</button>
+        </div>
+        <div class="form-group">
+            <label class="form-label">كلمة المراقبة</label>
+            <input id="newKwWord" class="form-input" placeholder="مثال: واجب، سكليف، اختبار">
+        </div>
+        <div class="form-group">
+            <label class="form-label">الرد الأولي (أول رسالة تُرسل في الخاص)</label>
+            <textarea id="newKwReply" class="form-input" rows="3" placeholder="مثال: أهلاً، أستطيع مساعدتك. كم عدد الأسئلة؟"></textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">نوع الحوار</label>
+            <select id="newKwIntent" class="form-input">
+                <option value="homework">📘 واجب (homework)</option>
+                <option value="exam">📝 اختبار (exam)</option>
+                <option value="sketch">✏️ سكليف (sketch)</option>
+                <option value="custom">⚙️ مخصص — رد واحد فقط (custom)</option>
+            </select>
+        </div>
+        <button class="btn btn-primary btn-lg" onclick="addNewKeyword()" style="width:100%">
+            <i class="fas fa-save"></i> حفظ الكلمة
+        </button>
+    </div>
+</div>
 <div id="teachFromUnknownModal" class="modal-overlay"><div class="modal"><div class="modal-header"><h3>📖 تعلم خدمة جديدة من الطلب</h3><button class="modal-close" onclick="closeTeachModal()">✕</button></div><input type="hidden" id="teachUnknownIndex"><div class="form-group"><label class="form-label">اسم الخدمة</label><input id="teachServiceName" class="form-input" placeholder="مثال: حل واجب"></div><div class="form-group"><label class="form-label">وصف الخدمة</label><textarea id="teachServiceDesc" class="form-input" rows="3" placeholder="وصف ما تقدمه هذه الخدمة"></textarea></div><button class="btn btn-primary btn-lg" onclick="confirmTeachFromUnknown()">تعلم الخدمة</button></div></div>
 
 <script>
@@ -796,19 +871,170 @@ function displaySearchResultsHtml(results) {
 function clearSearch() { document.getElementById('searchQuery').value=''; document.getElementById('excludeInput').value=''; excludeChatsList=[]; renderExcludeTags(); document.getElementById('searchResults').style.display='none'; currentSearchResults=[]; }
 
 // ========== Learning Bot ==========
-async function toggleLearningBot() { if(!isConnected){showToast('يجب تسجيل الدخول أولاً','error');return;} const toggle=document.getElementById('learningToggle'); toggle.classList.toggle('active'); const res=await fetch('/api/learning/toggle',{method:'POST'}); const data=await res.json(); if(data.success){ learningBotActive=data.active; updateLearningUI(); showToast(data.message,'success');} else toggle.classList.toggle('active'); }
-async function toggleReplyInGroups() { if(!isConnected){showToast('يجب تسجيل الدخول أولاً','error');return;} const toggle=document.getElementById('learningReplyGroupsToggle'); toggle.classList.toggle('active'); const res=await fetch('/api/learning/toggle_public',{method:'POST'}); const data=await res.json(); if(data.success){ learningReplyGroupsActive=data.reply_in_groups; updateLearningUI(); showToast(data.message,'success');} else toggle.classList.toggle('active'); }
-function updateLearningUI() { const statusText=document.getElementById('learningStatusText'); const toggle=document.getElementById('learningToggle'); const replyStatusText=document.getElementById('learningReplyGroupsText'); const replyToggle=document.getElementById('learningReplyGroupsToggle'); if(learningBotActive){ statusText.textContent='يعمل'; statusText.style.color='var(--success)'; toggle.classList.add('active');} else{ statusText.textContent='متوقف'; statusText.style.color='var(--text-muted)'; toggle.classList.remove('active');} if(learningReplyGroupsActive){ replyStatusText.textContent='الرد في المجموعات: مفعل'; replyStatusText.style.color='var(--success)'; replyToggle.classList.add('active');} else{ replyStatusText.textContent='الرد في المجموعات: معطل'; replyStatusText.style.color='var(--text-muted)'; replyToggle.classList.remove('active');} }
-async function loadServices() { const container=document.getElementById('servicesList'); const res=await fetch('/api/learning/services'); const data=await res.json(); if(data.success){ const services=data.services; if(Object.keys(services).length===0){ container.innerHTML='<div style="text-align:center;padding:20px">لا توجد خدمات بعد</div>'; return;} container.innerHTML=Object.entries(services).map(([name,details])=>`<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px"><div style="display:flex;justify-content:space-between"><strong>📚 ${escapeHtml(name)}</strong><button class="btn btn-danger btn-sm" onclick="deleteService('${escapeHtml(name).replace(/'/g,"\\'")}')"><i class="fas fa-trash"></i></button></div><div style="font-size:12px">${escapeHtml(details.description)}</div></div>`).join(''); } }
-async function loadUnknownRequests() { const container=document.getElementById('unknownRequestsList'); const res=await fetch('/api/learning/unknown'); const data=await res.json(); if(data.success && data.requests.length){ container.innerHTML=data.requests.map((req,idx)=>`<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px"><div style="font-size:12px">${req.time}</div><div>"${escapeHtml(req.raw_text)}"</div><button class="btn btn-primary btn-sm" onclick="openTeachModal(${idx},'${escapeHtml(req.suggested_name).replace(/'/g,"\\'")}')"><i class="fas fa-graduation-cap"></i> تعلم هذه الخدمة</button></div>`).join(''); } else container.innerHTML='<div style="text-align:center;padding:20px">لا توجد طلبات غير معروفة</div>'; }
-async function deleteService(serviceName){ if(!confirm(`حذف "${serviceName}"؟`)) return; const res=await fetch('/api/learning/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:serviceName})}); const data=await res.json(); showToast(data.message,data.success?'success':'error'); if(data.success) loadServices(); }
-function showAddServiceModal(){ document.getElementById('newServiceName').value=''; document.getElementById('newServiceDesc').value=''; document.getElementById('addServiceModal').classList.add('open'); }
-function closeAddServiceModal(){ document.getElementById('addServiceModal').classList.remove('open'); }
-async function addNewService(){ const name=document.getElementById('newServiceName').value.trim(); const desc=document.getElementById('newServiceDesc').value.trim(); if(!name||!desc){showToast('املأ جميع الحقول','error');return;} const res=await fetch('/api/learning/teach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:name,description:desc})}); const data=await res.json(); showToast(data.message,data.success?'success':'error'); if(data.success){ closeAddServiceModal(); loadServices(); } }
-function openTeachModal(index,suggestedName){ document.getElementById('teachUnknownIndex').value=index; document.getElementById('teachServiceName').value=suggestedName; document.getElementById('teachServiceDesc').value=''; document.getElementById('teachFromUnknownModal').classList.add('open'); }
+const INTENT_LABELS = {homework:'📘 واجب', exam:'📝 اختبار', sketch:'✏️ سكليف', custom:'⚙️ مخصص'};
+const INTENT_COLORS = {homework:'rgba(88,101,242,.2)', exam:'rgba(250,168,26,.2)', sketch:'rgba(0,212,170,.2)', custom:'rgba(139,148,158,.2)'};
+
+async function toggleLearningBot() {
+    if(!isConnected){showToast('يجب تسجيل الدخول أولاً','error');return;}
+    const toggle=document.getElementById('learningToggle'); toggle.classList.toggle('active');
+    const res=await fetch('/api/learning/toggle',{method:'POST'}); const data=await res.json();
+    if(data.success){ learningBotActive=data.active; updateLearningUI(); showToast(data.message,'success');}
+    else toggle.classList.toggle('active');
+}
+async function toggleReplyInGroups() {
+    if(!isConnected){showToast('يجب تسجيل الدخول أولاً','error');return;}
+    const toggle=document.getElementById('learningReplyGroupsToggle'); toggle.classList.toggle('active');
+    const res=await fetch('/api/learning/toggle_public',{method:'POST'}); const data=await res.json();
+    if(data.success){ learningReplyGroupsActive=data.reply_in_groups; updateLearningUI(); showToast(data.message,'success');}
+    else toggle.classList.toggle('active');
+}
+function updateLearningUI() {
+    const statusText=document.getElementById('learningStatusText');
+    const toggle=document.getElementById('learningToggle');
+    const replyText=document.getElementById('learningReplyGroupsText');
+    const replyToggle=document.getElementById('learningReplyGroupsToggle');
+    if(learningBotActive){ statusText.innerHTML='<span style="color:var(--success)">▶ يعمل</span>'; toggle.classList.add('active');}
+    else{ statusText.innerHTML='<span style="color:var(--danger)">⏹ متوقف</span>'; toggle.classList.remove('active');}
+    if(learningReplyGroupsActive){ replyText.textContent='الرد في المجموعات: مفعل'; replyText.style.color='var(--success)'; replyToggle.classList.add('active');}
+    else{ replyText.textContent='الرد في المجموعات: معطل'; replyText.style.color='var(--text-muted)'; replyToggle.classList.remove('active');}
+}
+
+// --- كلمات المراقبة ---
+async function loadKeywords() {
+    const container=document.getElementById('keywordsList');
+    if(!container) return;
+    const res=await fetch('/api/learning/keywords');
+    const data=await res.json();
+    if(!data.success){ container.innerHTML='<div style="color:var(--danger);padding:10px">تعذر التحميل</div>'; return; }
+    const kws=data.keywords;
+    if(!kws||Object.keys(kws).length===0){
+        container.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-muted)">لا توجد كلمات بعد</div>'; return;
+    }
+    container.innerHTML=Object.entries(kws).map(([kw,info])=>{
+        const intent=info.intent||'custom';
+        const label=INTENT_LABELS[intent]||intent;
+        const color=INTENT_COLORS[intent]||'rgba(88,101,242,.1)';
+        const safekw=escapeHtml(kw);
+        return `<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                <div style="flex:1">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                        <strong style="font-size:14px">"${safekw}"</strong>
+                        <span style="background:${color};border-radius:6px;padding:2px 8px;font-size:11px">${label}</span>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-muted);line-height:1.4">${escapeHtml(info.reply||'')}</div>
+                </div>
+                <button class="btn btn-danger btn-sm" onclick="deleteKeyword('${safekw.replace(/'/g,"\\'")}')"><i class="fas fa-trash"></i></button>
+            </div>
+        </div>`;
+    }).join('');
+}
+function showAddKeywordModal(){
+    document.getElementById('newKwWord').value='';
+    document.getElementById('newKwReply').value='';
+    document.getElementById('newKwIntent').value='homework';
+    document.getElementById('addKeywordModal').classList.add('open');
+}
+function closeAddKeywordModal(){ document.getElementById('addKeywordModal').classList.remove('open'); }
+async function addNewKeyword(){
+    const kw=document.getElementById('newKwWord').value.trim();
+    const reply=document.getElementById('newKwReply').value.trim();
+    const intent=document.getElementById('newKwIntent').value;
+    if(!kw||!reply){showToast('أدخل الكلمة والرد','error');return;}
+    const res=await fetch('/api/learning/teach_keyword',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keyword:kw,reply,intent})});
+    const data=await res.json();
+    showToast(data.message,data.success?'success':'error');
+    if(data.success){ closeAddKeywordModal(); loadKeywords(); }
+}
+async function deleteKeyword(kw){
+    if(!confirm(`حذف كلمة "${kw}"؟`)) return;
+    const res=await fetch('/api/learning/delete_keyword',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keyword:kw})});
+    const data=await res.json();
+    showToast(data.message,data.success?'success':'error');
+    if(data.success) loadKeywords();
+}
+
+// --- الجلسات النشطة ---
+async function loadActiveSessions(){
+    const container=document.getElementById('activeSessionsList');
+    const countEl=document.getElementById('activeSessionsCount');
+    if(!container) return;
+    try{
+        const res=await fetch('/api/learning/active_sessions');
+        const data=await res.json();
+        if(!data.success) return;
+        const sessions=data.sessions;
+        const count=Object.keys(sessions).length;
+        if(countEl) countEl.textContent=`${count} جلسة`;
+        if(count===0){
+            container.innerHTML='<div style="color:var(--text-muted);text-align:center;padding:8px">لا توجد جلسات نشطة</div>';
+            return;
+        }
+        container.innerHTML=Object.entries(sessions).map(([uid,info])=>{
+            const intent=INTENT_LABELS[info.intent]||info.intent;
+            const color=INTENT_COLORS[info.intent]||'rgba(88,101,242,.1)';
+            return `<div style="display:inline-flex;align-items:center;gap:8px;background:${color};border-radius:8px;padding:6px 12px;margin:4px;font-size:12px">
+                <i class="fas fa-user" style="color:var(--accent)"></i>
+                <span>${uid.slice(-6)}</span>
+                <span style="opacity:.7">${intent}</span>
+                <span style="background:rgba(255,255,255,.1);border-radius:4px;padding:1px 6px">خطوة ${info.step}</span>
+            </div>`;
+        }).join('');
+    }catch(e){}
+}
+
+// --- الطلبات الغير معروفة ---
+async function loadUnknownRequests() {
+    const container=document.getElementById('unknownRequestsList');
+    if(!container) return;
+    const res=await fetch('/api/learning/unknown');
+    const data=await res.json();
+    if(data.success && data.requests && data.requests.length){
+        container.innerHTML=data.requests.map((req,idx)=>`
+            <div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px">
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${req.time||''} — ${escapeHtml(req.sender_name||'')}</div>
+                <div style="margin-bottom:8px">"${escapeHtml(req.raw_text)}"</div>
+                <button class="btn btn-primary btn-sm" onclick="openTeachModal(${idx},'${escapeHtml(req.suggested_name||'').replace(/'/g,"\\'")}')">
+                    <i class="fas fa-graduation-cap"></i> تعلم هذه الكلمة
+                </button>
+            </div>`).join('');
+    } else {
+        container.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-muted)">لا توجد طلبات غير معروفة ✅</div>';
+    }
+}
+async function clearUnknownRequests(){
+    if(!confirm('مسح جميع الطلبات غير المعروفة؟')) return;
+    const res=await fetch('/api/learning/clear_unknown',{method:'POST'});
+    const data=await res.json(); showToast(data.message,data.success?'success':'error');
+    if(data.success) loadUnknownRequests();
+}
+
+// --- compat stubs (للحفاظ على الكود القديم) ---
+async function loadServices(){ loadKeywords(); }
+async function deleteService(name){ deleteKeyword(name); }
+function showAddServiceModal(){ showAddKeywordModal(); }
+function closeAddServiceModal(){ closeAddKeywordModal(); }
+async function addNewService(){ addNewKeyword(); }
+function openTeachModal(index,suggestedName){
+    document.getElementById('teachUnknownIndex').value=index;
+    document.getElementById('teachServiceName').value=suggestedName;
+    document.getElementById('teachServiceDesc').value='';
+    document.getElementById('teachFromUnknownModal').classList.add('open');
+}
 function closeTeachModal(){ document.getElementById('teachFromUnknownModal').classList.remove('open'); }
-async function confirmTeachFromUnknown(){ const index=parseInt(document.getElementById('teachUnknownIndex').value); const serviceName=document.getElementById('teachServiceName').value.trim(); const description=document.getElementById('teachServiceDesc').value.trim(); if(!serviceName||!description){showToast('املأ جميع الحقول','error');return;} const res=await fetch('/api/learning/teach_from_unknown',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index,service:serviceName,description})}); const data=await res.json(); showToast(data.message,data.success?'success':'error'); if(data.success){ closeTeachModal(); loadUnknownRequests(); loadServices(); } }
-async function clearUnknownRequests(){ if(!confirm('مسح جميع الطلبات غير المعروفة؟')) return; const res=await fetch('/api/learning/clear_unknown',{method:'POST'}); const data=await res.json(); showToast(data.message,data.success?'success':'error'); if(data.success) loadUnknownRequests(); }
+async function confirmTeachFromUnknown(){
+    const index=parseInt(document.getElementById('teachUnknownIndex').value);
+    const kw=document.getElementById('teachServiceName').value.trim();
+    const reply=document.getElementById('teachServiceDesc').value.trim();
+    if(!kw||!reply){showToast('أدخل الكلمة والرد','error');return;}
+    const res=await fetch('/api/learning/teach_keyword',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keyword:kw,reply,intent:'custom'})});
+    const data=await res.json(); showToast(data.message,data.success?'success':'error');
+    if(data.success){
+        // أيضاً احذفه من قائمة الطلبات
+        await fetch('/api/learning/teach_from_unknown',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index,service:kw,description:reply})});
+        closeTeachModal(); loadUnknownRequests(); loadKeywords();
+    }
+}
 
 // ========== Core functions ==========
 function copyToClipboard(text){ navigator.clipboard.writeText(text).then(()=>showToast('تم النسخ!','success')).catch(()=>showToast('فشل النسخ','error')); }
@@ -1345,12 +1571,14 @@ document.addEventListener('DOMContentLoaded',()=>{
     if('Notification' in window) Notification.requestPermission();
     addLog('🚀 تم تحميل التطبيق بنجاح','success');
     {% if settings.get('phone') %} document.getElementById('loginPhone').value='{{ settings.get("phone", "") }}'; document.getElementById('loginPhone_display').textContent='{{ settings.get("phone", "") }}'; {% endif %}
-    loadServices();
+    loadKeywords();
     loadUnknownRequests();
+    loadActiveSessions();
     // Real-time keywords preview
     const kwInput = document.getElementById('rawKeywordsInput');
     if(kwInput) kwInput.addEventListener('input', updateKeywordsPreview);
-    setInterval(()=>{ loadServices(); loadUnknownRequests(); },30000);
+    setInterval(()=>{ loadKeywords(); loadUnknownRequests(); },30000);
+    setInterval(loadActiveSessions, 5000);
     setInterval(refreshStatus,30000);
 });
 </script>
