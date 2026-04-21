@@ -238,7 +238,6 @@
         </button>
         {% endfor %}
         <button class="user-btn" onclick="openAdminModal()" style="background:linear-gradient(135deg,#ed4245,#c23b3d);color:#fff;border:none;"><i class="fas fa-user-shield"></i> الإدارة</button>
-        <button class="user-btn" onclick="openErrorExplorer()" style="background:rgba(250,168,26,0.2);border-color:var(--warning);"><i class="fas fa-bug"></i> 🔍 مستكشف الأخطاء</button>
     </div>
 
     <!-- Stats Bar -->
@@ -375,11 +374,32 @@
     <!-- Tab: Groups Join -->
     <div id="tab-groups" class="tab-content">
         <div class="card">
-            <div class="card-header"><div class="card-icon" style="background:rgba(88,101,242,.15);color:var(--primary)"><i class="fas fa-link"></i></div><div><h3>الانضمام للمجموعات</h3><p>ألصق الروابط وسيفرزها النظام تلقائياً ثم ينضم</p></div></div>
-            <div class="form-group"><label class="form-label">ألصق الروابط هنا</label><textarea class="form-input" id="joinRawInput" rows="4" placeholder="ألصق أي شيء هنا، مثلاً:&#10;https://t.me/+Abc123&#10;@mygroup&#10;t.me/channel1&#10;-1001234567890"></textarea></div>
-            <div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn btn-primary" onclick="parseJoinLinks()"><i class="fas fa-filter"></i> فرز الروابط</button><button class="btn btn-secondary" onclick="clearJoinInput()">مسح</button></div>
-            <div id="joinParsedSection" style="display:none"><div id="joinParsedList"></div><button id="startBulkJoinBtn" class="btn btn-primary" onclick="startBulkJoin()"><i class="fas fa-rocket"></i> انضمام للجميع</button></div>
-            <div style="margin-top:16px"><label class="form-label">انضمام فردي سريع</label><div style="display:flex;gap:8px"><input class="form-input" id="joinGroupLink" placeholder="https://t.me/+xxxx أو @groupname"><button class="btn btn-secondary" onclick="joinGroup()"><i class="fas fa-sign-in-alt"></i> انضم</button></div></div>
+            <div class="card-header"><div class="card-icon" style="background:rgba(88,101,242,.15);color:var(--primary)"><i class="fas fa-link"></i></div><div><h3>الانضمام للمجموعات</h3><p>ألصق روابط أو معرّفات المجموعات وسينضم النظام تلقائياً</p></div></div>
+            <div class="form-group">
+                <label class="form-label">الروابط والمعرّفات (رابط واحد أو عدة روابط)</label>
+                <textarea class="form-input" id="joinRawInput" rows="5"
+                    placeholder="https://t.me/+Abc123&#10;@mygroup&#10;t.me/channel1&#10;-1001234567890"
+                    style="font-family:monospace;font-size:13px;resize:vertical"></textarea>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button id="startBulkJoinBtn" class="btn btn-primary btn-lg" onclick="startBulkJoin()" style="flex:1">
+                    <i class="fas fa-rocket"></i> ابدأ الانضمام
+                </button>
+                <button class="btn btn-secondary" onclick="document.getElementById('joinRawInput').value='';document.getElementById('joinStatusBox').style.display='none'">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <!-- صندوق الحالة — يظهر تلقائياً أثناء العملية -->
+            <div id="joinStatusBox" style="display:none;margin-top:14px;background:var(--bg-input);border-radius:10px;padding:12px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <span id="joinStatusText" style="font-size:13px;color:var(--accent);font-weight:600"></span>
+                    <span id="joinStatusCount" style="font-size:12px;color:var(--text-muted)"></span>
+                </div>
+                <div style="background:var(--bg-card2);border-radius:6px;height:6px;overflow:hidden;margin-bottom:10px">
+                    <div id="joinStatusFill" style="height:100%;background:linear-gradient(90deg,var(--primary),var(--accent));width:0%;transition:width .4s;border-radius:6px"></div>
+                </div>
+                <div id="joinStatusResult" style="font-size:13px"></div>
+            </div>
         </div>
     </div>
 
@@ -426,7 +446,7 @@
 <div id="errorExplorerModal" class="modal-overlay"><div class="modal" style="max-width:700px"><div class="modal-header"><h3><i class="fas fa-bug"></i> مستكشف الأخطاء</h3><button class="modal-close" onclick="closeErrorExplorer()">✕</button></div><div style="margin-bottom:15px;display:flex;justify-content:space-between"><span id="errorCount">0 خطأ</span><button class="btn btn-danger btn-sm" onclick="clearAllErrors()"><i class="fas fa-trash"></i> مسح جميع الأخطاء</button><button class="btn btn-primary btn-sm" onclick="diagnoseSystem()"><i class="fas fa-stethoscope"></i> تشخيص النظام</button><button class="btn btn-success btn-sm" onclick="fixAllErrors()"><i class="fas fa-wrench"></i> إصلاح جميع الأخطاء</button></div><div id="errorsListContainer" style="max-height:60vh;overflow-y:auto"></div></div></div>
 
 <!-- Admin Modal (يشمل جميع الأقسام: مستخدمين، محرر كود، أوامر نظام، Git Push، جلسات GitHub) -->
-<div id="adminModal" class="modal-overlay"><div class="admin-modal-content"><div class="admin-modal-header"><h2><i class="fas fa-user-shield"></i> لوحة الإدارة</h2><button class="modal-close" onclick="closeAdminModal()">&times;</button></div><div id="adminContent"><div id="adminLoginForm" class="admin-login-form"><input type="text" id="adminUsername" placeholder="اسم المستخدم" onkeydown="if(event.key==='Enter')document.getElementById('adminPassword').focus()"><input type="password" id="adminPassword" placeholder="كلمة المرور" onkeydown="if(event.key==='Enter')adminLogin(document.getElementById('btnAdminLogin'))"><button class="btn btn-primary" id="btnAdminLogin" onclick="adminLogin(this)">تسجيل الدخول</button><div id="adminLoginError" style="color:var(--danger); margin-top:8px;"></div></div><div id="adminDashboard" style="display:none;"><div class="toolbar" style="margin-bottom:15px;display:flex;gap:10px;justify-content:flex-end"><button class="btn btn-success btn-sm" onclick="exportAllData()"><i class="fas fa-download"></i> تصدير البيانات</button><button class="btn btn-danger btn-sm" onclick="restartServer()"><i class="fas fa-power-off"></i> إعادة التشغيل</button><button class="btn btn-secondary btn-sm" onclick="adminLogout()">تسجيل الخروج</button></div>
+<div id="adminModal" class="modal-overlay"><div class="admin-modal-content"><div class="admin-modal-header"><h2><i class="fas fa-user-shield"></i> لوحة الإدارة</h2><button class="modal-close" onclick="closeAdminModal()">&times;</button></div><div id="adminContent"><div id="adminLoginForm" class="admin-login-form"><input type="text" id="adminUsername" placeholder="اسم المستخدم" onkeydown="if(event.key==='Enter')document.getElementById('adminPassword').focus()"><input type="password" id="adminPassword" placeholder="كلمة المرور" onkeydown="if(event.key==='Enter')adminLogin(document.getElementById('btnAdminLogin'))"><button class="btn btn-primary" id="btnAdminLogin" onclick="adminLogin(this)">تسجيل الدخول</button><div id="adminLoginError" style="color:var(--danger); margin-top:8px;"></div></div><div id="adminDashboard" style="display:none;"><div class="toolbar" style="margin-bottom:15px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap"><button class="btn btn-success btn-sm" onclick="exportAllData()"><i class="fas fa-download"></i> تصدير البيانات</button><button class="btn btn-danger btn-sm" onclick="restartServer()"><i class="fas fa-power-off"></i> إعادة التشغيل</button><button class="btn btn-sm" onclick="openErrorExplorer()" style="background:rgba(250,168,26,0.2);border:1px solid var(--warning);color:var(--warning);border-radius:8px;padding:6px 12px;cursor:pointer;"><i class="fas fa-bug"></i> مستكشف الأخطاء</button><button class="btn btn-secondary btn-sm" onclick="adminLogout()">تسجيل الخروج</button></div>
 <div id="adminUsersGrid" class="admin-user-grid">جاري التحميل...</div>
 
 <!-- قسم محرر الكود (استبدال، إدراج، استبدال كامل) -->
@@ -888,17 +908,25 @@ function initSocket(){
     socket.on('new_alert',data=>handleNewAlert(data));
     socket.on('auto_reply_event',data=>handleAutoReplyEvent(data));
     socket.on('join_progress',data=>{
-        const bar=document.getElementById('joinProgressBar');
-        const txt=document.getElementById('joinProgressText');
-        if(bar){ const pct=data.total>0?Math.round(data.index/data.total*100):0; bar.style.width=pct+'%'; }
-        if(txt) txt.textContent=`✅ ${data.ok} | ⚠️ ${data.skip} | ❌ ${data.fail} من ${data.total}`;
+        const fill=document.getElementById('joinStatusFill');
+        const txt=document.getElementById('joinStatusText');
+        const cnt=document.getElementById('joinStatusCount');
+        if(fill){ const pct=data.total>0?Math.round((data.index||0)/data.total*100):0; fill.style.width=Math.max(15,pct)+'%'; }
+        if(txt) txt.textContent=`🚀 جارٍ الانضمام...`;
+        if(cnt) cnt.textContent=`✅ ${data.ok||0} | ⚠️ ${data.skip||0} | ❌ ${data.fail||0} من ${data.total}`;
     });
     socket.on('bulk_join_done',data=>{
         const btn=document.getElementById('startBulkJoinBtn');
-        if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-rocket"></i> انضمام للجميع'; }
+        if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-rocket"></i> ابدأ الانضمام'; }
+        const fill=document.getElementById('joinStatusFill');
+        const txt=document.getElementById('joinStatusText');
+        const cnt=document.getElementById('joinStatusCount');
+        const res=document.getElementById('joinStatusResult');
+        if(fill) fill.style.width='100%';
+        if(txt) txt.textContent='🏁 اكتمل الانضمام';
+        if(cnt) cnt.textContent=`✅ ${data.ok} ناجح | ⚠️ ${data.skip} مسبقاً | ❌ ${data.fail} فاشل`;
+        if(res) res.innerHTML=`<span style="color:var(--success)">تم الانتهاء بنجاح</span>`;
         showToast(`🏁 اكتمل: ✅ ${data.ok} ناجح | ⚠️ ${data.skip} مسبقاً | ❌ ${data.fail} فاشل`,'success');
-        const prog=document.getElementById('joinProgressSection');
-        if(prog) prog.style.display='none';
     });
     socket.on('stats_update',data=>{ if(data.sent!==undefined) document.getElementById('statSent').textContent=data.sent; if(data.errors!==undefined) document.getElementById('statErrors').textContent=data.errors; if(data.alerts!==undefined) document.getElementById('statAlerts').textContent=data.alerts; if(data.replies!==undefined) document.getElementById('statReplies').textContent=data.replies; });
     socket.on('monitoring_status',data=>{ isMonitoring=data.is_running; updateMonitoringUI(isMonitoring); });
@@ -1165,47 +1193,54 @@ async function stopMonitoring(){
         updateMonitoringUI(false); 
     } 
 }
-async function joinGroup(){ if(!isConnected){showToast('يجب تسجيل الدخول أولاً','error');return;} const link=document.getElementById('joinGroupLink').value.trim(); if(!link){showToast('أدخل رابط المجموعة','error');return;} const resp=await fetch('/api/join_group',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({link})}); const data=await resp.json(); showToast(data.message,data.success?'success':'error'); if(data.success) document.getElementById('joinGroupLink').value=''; }
 let parsedJoinLinks=[];
-function clearJoinInput(){ document.getElementById('joinRawInput').value=''; document.getElementById('joinParsedSection').style.display='none'; parsedJoinLinks=[]; }
-async function parseJoinLinks(){
-    const raw=document.getElementById('joinRawInput').value.trim();
-    if(!raw){showToast('ألصق الروابط أولاً','error');return;}
-    const resp=await fetch('/api/parse_join_links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({raw})});
-    const data=await resp.json();
-    if(!data.success||!data.links||data.links.length===0){showToast('لم يتم العثور على روابط صالحة','error');return;}
-    parsedJoinLinks=data.links;
-    const listEl=document.getElementById('joinParsedList');
-    listEl.innerHTML=`<div style="font-size:13px;color:var(--text-muted);margin-bottom:10px">تم فرز ${data.count} رابط، سيتم الانضمام إليها جميعاً:</div>`+
-        parsedJoinLinks.map((l,idx)=>`<div style="padding:6px 10px;background:var(--bg-card2);border-radius:8px;margin:4px 0;font-size:12px;border:1px solid var(--border)" id="joinRow_${idx}">${escapeHtml(l.label||l.entity||'')}</div>`).join('');
-    document.getElementById('joinParsedSection').style.display='block';
-    showToast(`✅ تم فرز ${data.count} رابط`,'success');
-    document.getElementById('joinResultsSection')?.remove();
-}
 async function startBulkJoin(){
     if(!isConnected){showToast('يجب تسجيل الدخول أولاً','error');return;}
-    if(!parsedJoinLinks.length){showToast('لا توجد روابط','error');return;}
+    const raw=document.getElementById('joinRawInput').value.trim();
+    if(!raw){showToast('ألصق الروابط أولاً','error');return;}
     const btn=document.getElementById('startBulkJoinBtn');
+    const statusBox=document.getElementById('joinStatusBox');
+    const statusText=document.getElementById('joinStatusText');
+    const statusCount=document.getElementById('joinStatusCount');
+    const statusFill=document.getElementById('joinStatusFill');
+    const statusResult=document.getElementById('joinStatusResult');
+    // مرحلة 1: فرز الروابط داخلياً (خفي عن المستخدم)
     btn.disabled=true;
-    btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> جارٍ الانضمام...';
-    let prog=document.getElementById('joinProgressSection');
-    if(!prog){
-        prog=document.createElement('div');
-        prog.id='joinProgressSection';
-        prog.style.cssText='margin-top:12px;padding:10px;background:var(--bg-card2);border-radius:10px;border:1px solid var(--border)';
-        prog.innerHTML=`<div id="joinProgressText" style="font-size:13px;margin-bottom:6px">جارٍ الانضمام...</div>
-        <div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden"><div id="joinProgressBar" style="width:0%;height:100%;background:var(--primary);transition:width .3s"></div></div>`;
-        document.getElementById('joinParsedSection').after(prog);
+    btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> جارٍ المعالجة...';
+    statusBox.style.display='block';
+    statusText.textContent='⏳ جارٍ تحليل الروابط...';
+    statusCount.textContent='';
+    statusFill.style.width='10%';
+    statusResult.innerHTML='';
+    let parseData;
+    try{
+        const parseResp=await fetch('/api/parse_join_links',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({raw})});
+        parseData=await parseResp.json();
+    } catch(e){ showToast('خطأ في تحليل الروابط','error'); btn.disabled=false; btn.innerHTML='<i class="fas fa-rocket"></i> ابدأ الانضمام'; return; }
+    if(!parseData.success||!parseData.links||parseData.links.length===0){
+        showToast('لم يتم العثور على روابط صالحة','error');
+        statusBox.style.display='none';
+        btn.disabled=false; btn.innerHTML='<i class="fas fa-rocket"></i> ابدأ الانضمام'; return;
     }
-    prog.style.display='block';
-    document.getElementById('joinProgressBar').style.width='0%';
-    document.getElementById('joinProgressText').textContent='جارٍ الانضمام...';
+    parsedJoinLinks=parseData.links;
+    const total=parseData.count;
+    // مرحلة 2: الانضمام
+    statusText.textContent=`🚀 جارٍ الانضمام إلى ${total} مجموعة...`;
+    statusCount.textContent=`0 / ${total}`;
+    statusFill.style.width='15%';
     try{
         const resp=await fetch('/api/bulk_join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({links:parsedJoinLinks})});
         const data=await resp.json();
-        if(!data.success){ showToast(data.message,'error'); btn.disabled=false; btn.innerHTML='<i class="fas fa-rocket"></i> انضمام للجميع'; prog.style.display='none'; }
-        else { showToast(data.message,'success'); }
-    } catch(e){ showToast('خطأ في الانضمام: '+e.message,'error'); btn.disabled=false; btn.innerHTML='<i class="fas fa-rocket"></i> انضمام للجميع'; }
+        if(!data.success){
+            showToast(data.message,'error');
+            statusBox.style.display='none';
+            btn.disabled=false; btn.innerHTML='<i class="fas fa-rocket"></i> ابدأ الانضمام';
+        }
+        // النتيجة ستصل عبر socket event 'bulk_join_done'
+    } catch(e){
+        showToast('خطأ: '+e.message,'error');
+        btn.disabled=false; btn.innerHTML='<i class="fas fa-rocket"></i> ابدأ الانضمام';
+    }
 }
 let alertCount=0;
 function handleNewAlert(alert){ alertCount++; document.getElementById('statAlerts').textContent=alertCount; document.getElementById('alertCountText').textContent=`${alertCount} تنبيه`; const container=document.getElementById('alertsList'); if(container.children.length===1 && !container.children[0].classList.contains('alert-item')) container.innerHTML=''; const item=document.createElement('div'); item.className='alert-item'; item.innerHTML=`<div class="alert-header"><span class="alert-keyword">🔍 ${escapeHtml(alert.keyword)}</span><span>${alert.timestamp}</span></div><div><strong>${escapeHtml(alert.group)}</strong> من ${escapeHtml(alert.sender)}</div><div class="alert-msg">${escapeHtml(alert.message)}</div>`; container.insertBefore(item,container.firstChild); addLog(`🚨 تنبيه: "${alert.keyword}" في ${alert.group} من ${alert.sender}`,'alert'); if('Notification' in window && Notification.permission==='granted') new Notification('🚨 تنبيه تيليجرام',{body:`كلمة: ${alert.keyword}\nمجموعة: ${alert.group}`}); }
