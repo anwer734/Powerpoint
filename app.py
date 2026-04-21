@@ -13,7 +13,7 @@ import sys
 import traceback
 import base64
 from threading import Lock
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, session, request, jsonify, render_template, send_from_directory, render_template_string, make_response
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from telethon import events, Button, TelegramClient, errors
@@ -559,40 +559,95 @@ def load_settings(user_id):
         add_error("settings_load", str(e), f"user_id: {user_id}")
     return {}
 
-# ========== البوت التعليمي ==========
+# ========== البوت التعليمي المتعدد المراحل ==========
+class UserSession:
+    """يحفظ حالة محادثة مستخدم واحد"""
+    def __init__(self, user_id, intent):
+        self.user_id = user_id
+        self.intent = intent      # homework / exam / sketch / custom
+        self.step = 0
+        self.data = {}
+        self.last_active = datetime.now()
+
+class ConversationManager:
+    """يدير جميع جلسات المحادثة مع المستخدمين"""
+    def __init__(self, timeout_minutes=30):
+        self.sessions = {}
+        self.timeout = timedelta(minutes=timeout_minutes)
+
+    def get(self, user_id):
+        session = self.sessions.get(user_id)
+        if session and datetime.now() - session.last_active > self.timeout:
+            self.end_session(user_id)
+            return None
+        return session
+
+    def start_session(self, user_id, intent):
+        self.sessions[user_id] = UserSession(user_id, intent)
+        return self.sessions[user_id]
+
+    def update_step(self, user_id, step, data=None):
+        session = self.get(user_id)
+        if session:
+            session.step = step
+            if data:
+                session.data.update(data)
+            session.last_active = datetime.now()
+        return session
+
+    def end_session(self, user_id):
+        self.sessions.pop(user_id, None)
+
+    def get_all_info(self):
+        return {
+            str(uid): {"intent": sess.intent, "step": sess.step}
+            for uid, sess in self.sessions.items()
+        }
+
 class LearningBot:
     def __init__(self, user_id=None):
         self.user_id = user_id
         self.client = None
         self.is_monitoring = False
         self.reply_in_groups = False
-        self.knowledge = self.load_knowledge()
+        self.conversation_manager = ConversationManager()
         self.unknown_requests = []
-        self.quick_replies = [
-            (r'\b(واجب|حل واجب|مسألة|تمارين)\b', 'ابشر ارسل الواجب وابشر'),
-            (r'\b(اختبار|كويز|فاينل|ميد)\b', 'متى اختبارك؟'),
-            (r'\b(مشروع|تقرير|بحث)\b', 'هات العنوان وش مشروعك؟'),
-            (r'\b(تلخيص|ملخص)\b', 'ارسل النص اللي تبي تلخيصه'),
-            (r'\b(ترجمة|ترجم)\b', 'ارسل النص وحدد اللغة'),
-        ]
+        self.keywords = self.load_keywords()
 
-    def load_knowledge(self):
+    def load_keywords(self):
         if os.path.exists(DATA_FILE):
             try:
                 with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    raw = json.load(f)
+                # دعم النسخة الجديدة (intent) والقديمة (intent_keywords)
+                if raw:
+                    first = next(iter(raw.values()))
+                    if isinstance(first, dict) and "intent" in first:
+                        return raw
+                    # تحويل النسخة القديمة
+                    converted = {}
+                    for name, sdata in raw.items():
+                        converted[name] = {
+                            "reply": sdata.get("description", f"أبشر، سأساعدك في {name}"),
+                            "intent": "custom"
+                        }
+                    return converted
             except:
                 pass
         return {
-            "حل واجب": {"description": "حل الواجبات والمسائل الدراسية", "questions": ["وش المادة؟", "كم سؤال؟", "متى تحتاجه؟"], "intent_keywords": ["حل", "واجب", "مسألة", "سؤال", "تمارين"]},
-            "بحث": {"description": "إعداد البحوث الأكاديمية", "questions": ["وش موضوع البحث؟", "كم صفحة؟", "تريد مراجع؟"], "intent_keywords": ["بحث", "تقرير", "مشروع", "دراسة"]},
-            "تلخيص": {"description": "تلخيص الكتب والمحاضرات", "questions": ["وش المحتوى؟", "كم صفحة؟", "ملخص مفصل ولا مختصر؟"], "intent_keywords": ["تلخيص", "ملخص", "اختصار"]},
-            "ترجمة": {"description": "ترجمة النصوص", "questions": ["اللغة المصدر؟", "كم كلمة؟", "أكاديمية ولا عادية؟"], "intent_keywords": ["ترجمة", "ترجم", "نقل"]}
+            "واجب": {"reply": "ابشر ارسل الواجب وابشر 👍 أخبرني المادة وعدد الأسئلة.", "intent": "homework"},
+            "اختبار": {"reply": "متى اختبارك؟ سأجهز لك ملخصاً وتمارين نموذجية.", "intent": "exam"},
+            "سكليف": {"reply": "أهلاً، سأقوم بعمل سكليف لك. كم عدد الأيام التي تحتاجها؟", "intent": "sketch"},
+            "سكيتش": {"reply": "أهلاً، سأقوم بعمل سكليف لك. كم عدد الأيام التي تحتاجها؟", "intent": "sketch"},
+            "من يحل": {"reply": "أنا موجود لحل الواجبات والاختبارات. أخبرني التفاصيل.", "intent": "homework"},
+            "مشروع": {"reply": "هات العنوان وش موضوع مشروعك؟ وكم صفحة تحتاج؟", "intent": "custom"},
+            "تلخيص": {"reply": "ارسل النص اللي تبي تلخيصه وسأعمل عليه.", "intent": "custom"},
+            "ترجمة": {"reply": "ارسل النص وحدد اللغة المطلوبة.", "intent": "custom"},
         }
 
-    def save_knowledge(self):
+    def save_keywords(self):
         with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(self.knowledge, f, ensure_ascii=False, indent=4)
+            json.dump(self.keywords, f, ensure_ascii=False, indent=4)
 
     async def start_with_client(self, client):
         self.client = client
@@ -610,7 +665,8 @@ class LearningBot:
         text_lower = text.lower()
         if re.search(r'wa\.me|whatsapp\.com|t\.me/\+|\bواتس\b', text_lower):
             return True
-        marketing_words = ['خدماتنا', 'من خدمتنا', 'اسعار مناسبة', 'للتواصل', 'عروض', 'خصم', 'تخفيض', 'احترافية', 'بافضل سعر', 'خدمة سريعة', 'نقدم لكم', 'لفترة محدودة']
+        marketing_words = ['خدماتنا', 'من خدمتنا', 'اسعار مناسبة', 'للتواصل', 'عروض',
+                           'خصم', 'تخفيض', 'احترافية', 'بافضل سعر', 'خدمة سريعة', 'نقدم لكم', 'لفترة محدودة']
         for word in marketing_words:
             if word in text_lower:
                 return True
@@ -630,64 +686,128 @@ class LearningBot:
             sender_name = getattr(sender, 'first_name', '') or getattr(sender, 'username', '') or 'عزيزي'
             is_group = event.is_group
             chat_id = event.chat_id
+            user_id = event.sender_id
 
             if self.is_likely_advertisement(text):
-                socketio.emit('log_update', {"message": f"📢 تم تجاهل إعلان من {sender_name}"}, to=self.user_id)
+                socketio.emit('log_update', {"message": f"📢 تجاهل إعلان من {sender_name}"}, to=self.user_id)
                 return
 
-            for pattern, reply in self.quick_replies:
-                if re.search(pattern, text, re.IGNORECASE):
-                    if is_group and not self.reply_in_groups:
-                        socketio.emit('log_update', {"message": f"⏸️ تم تجاهل طلب في مجموعة (الرد معطل)"}, to=self.user_id)
-                        return
-                    await event.reply(reply)
-                    socketio.emit('log_update', {"message": f"🤖 رد سريع لـ {sender_name}: {reply}"}, to=self.user_id)
+            # -- رسالة خاصة: تحقق من وجود جلسة نشطة (متابعة حوار)
+            if not is_group:
+                session = self.conversation_manager.get(user_id)
+                if session:
+                    await self.handle_existing_conversation(event, session, text, sender)
                     return
-
-            if is_group and not self.reply_in_groups:
+                # بدون جلسة في الخاص: ابحث عن كلمة
+                if self.reply_in_groups:
+                    matched = self._find_keyword(text)
+                    if matched:
+                        intent = self.keywords[matched]["intent"]
+                        self.conversation_manager.start_session(user_id, intent)
+                        await event.reply(self.keywords[matched]["reply"])
+                        socketio.emit('log_update', {"message": f"🤖 بدأ محادثة (خاص) مع {sender_name} — {matched}"}, to=self.user_id)
                 return
 
-            service = self.detect_service(text)
-            if service:
-                await self.send_simple_reply(event, service)
-            else:
-                if any(kw in text.lower() for kw in ["محتاج", "ابي", "اريد", "مساعدة"]):
-                    self.unknown_requests.append({
-                        "raw_text": text[:50],
-                        "suggested_name": text[:50],
-                        "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "chat_id": chat_id,
-                        "sender_name": sender_name
-                    })
-                    socketio.emit('new_unknown', self.unknown_requests[-1], to=self.user_id)
+            # -- رسالة مجموعة: بحث عن كلمة مراقبة
+            if is_group:
+                matched = self._find_keyword(text)
+                if matched:
+                    intent = self.keywords[matched]["intent"]
+                    self.conversation_manager.start_session(user_id, intent)
+                    try:
+                        await self.client.send_message(user_id, self.keywords[matched]["reply"])
+                        socketio.emit('log_update', {"message": f"🤖 بدأ محادثة مع {sender_name} — {matched}"}, to=self.user_id)
+                    except Exception as e:
+                        socketio.emit('log_update', {"message": f"❌ فشل الإرسال لـ {sender_name}: {e}"}, to=self.user_id)
+                else:
+                    if not self.reply_in_groups and any(kw in text.lower() for kw in ["محتاج", "ابي", "اريد", "مساعدة", "يحل", "يساعد"]):
+                        req = {
+                            "raw_text": text[:80],
+                            "suggested_name": text.split()[-1] if text.split() else "خدمة",
+                            "time": datetime.now().strftime("%H:%M"),
+                            "sender_name": sender_name
+                        }
+                        self.unknown_requests.append(req)
+                        if len(self.unknown_requests) > 50:
+                            self.unknown_requests = self.unknown_requests[-50:]
+                        socketio.emit('new_unknown', req, to=self.user_id)
+
         except Exception as e:
             add_error("learning_bot", str(e), f"user: {self.user_id}")
-            logger.error(f"خطأ في البوت: {e}")
+            logger.error(f"خطأ في البوت التعليمي: {e}")
 
-    def detect_service(self, text):
-        text_low = text.lower()
-        best_match = None
-        best_score = 0
-        for service, data in self.knowledge.items():
-            for kw in data.get("intent_keywords", []):
-                if kw in text_low:
-                    score = len(kw)
-                    if score > best_score:
-                        best_score = score
-                        best_match = service
-        return best_match
+    def _find_keyword(self, text):
+        text_lower = text.lower()
+        for kw in self.keywords:
+            if kw.lower() in text_lower:
+                return kw
+        return None
 
-    async def send_simple_reply(self, event, service):
-        if service == "حل واجب":
-            await event.reply("ابشر ارسل الواجب وابشر")
-        elif service == "بحث":
-            await event.reply("هات العنوان وش موضوع البحث؟")
-        elif service == "تلخيص":
-            await event.reply("ارسل النص اللي تبي تلخيصه")
-        elif service == "ترجمة":
-            await event.reply("ارسل النص وحدد اللغة")
-        else:
-            await event.reply("ابشر اخوي وش عندك؟")
+    async def handle_existing_conversation(self, event, session, text, sender):
+        """إدارة الحوار المتعدد المراحل حسب نوع الطلب والخطوة الحالية"""
+        user_id = event.sender_id
+        intent = session.intent
+        step = session.step
+        text_lower = text.lower()
+        try:
+            if intent == "homework":
+                if step == 0:
+                    await event.reply("أبشر اخوي! أرسل لي الواجب (صورة أو نص) وسأبدأ العمل. كم وقت متبقي للتسليم؟")
+                    self.conversation_manager.update_step(user_id, 1)
+                elif step == 1:
+                    if any(w in text_lower for w in ["يوم", "ساعة", "بكرا", "غداً", "غدا", "اسبوع", "بعد"]):
+                        await event.reply("تمام، سأسلمه في الوقت المحدد. الآن أرسل الواجب (نص أو صورة).")
+                        self.conversation_manager.update_step(user_id, 2, {"deadline": text})
+                    else:
+                        await event.reply("أرسل لي الواجب الآن (صورة أو نص).")
+                        self.conversation_manager.update_step(user_id, 2)
+                elif step == 2:
+                    await event.reply("✅ تم استلام واجبك! سأحله وأرسله لك عبر هذه المحادثة. شكراً لثقتك 🎓")
+                    self.conversation_manager.end_session(user_id)
+
+            elif intent == "exam":
+                if step == 0:
+                    if any(w in text_lower for w in ["بكرا", "غداً", "غدا", "يوم", "اسبوع", "بعد"]):
+                        await event.reply("تمام! هل تريد التركيز على جزء معين؟ (مثال: الفصل الأول، المعادلات)")
+                        self.conversation_manager.update_step(user_id, 1, {"date": text})
+                    else:
+                        await event.reply("متى موعد اختبارك بالتحديد؟ (مثال: بكرا، يوم الأحد، بعد 3 أيام)")
+                elif step == 1:
+                    await event.reply("✅ ممتاز! سأجهز لك ملخصاً مركزاً وتمارين نموذجية خلال 12 ساعة. بالتوفيق 📚")
+                    self.conversation_manager.end_session(user_id)
+
+            elif intent == "sketch":
+                if step == 0:
+                    days_match = re.search(r'(\d+)', text)
+                    if days_match:
+                        days = days_match.group(1)
+                        await event.reply(f"أبشر! سأعمل لك السكليف خلال {days} يوم. هل تريد صيغة رسمية معتمدة؟ (نعم / لا)")
+                        self.conversation_manager.update_step(user_id, 1, {"days": days})
+                    else:
+                        await event.reply("كم عدد الأيام التي تحتاجها؟ (اكتب رقماً فقط، مثل: 3)")
+                elif step == 1:
+                    if any(w in text_lower for w in ["نعم", "ايه", "اه", "اي"]):
+                        await event.reply("رائع! أرسل لي بياناتك الكاملة:\n• الاسم الكامل\n• الجامعة / الكلية\n• القسم / التخصص")
+                        self.conversation_manager.update_step(user_id, 2, {"formal": True})
+                    elif any(w in text_lower for w in ["لا", "ما", "لأ"]):
+                        await event.reply("حسناً، سكليف عادي. أرسل لي:\n• الاسم\n• التخصص")
+                        self.conversation_manager.update_step(user_id, 2, {"formal": False})
+                    else:
+                        await event.reply("أجب بـ 'نعم' أو 'لا' — هل تريد الصيغة الرسمية المعتمدة؟")
+                elif step == 2:
+                    days = session.data.get("days", "المدة المتفق عليها")
+                    session.data["user_info"] = text
+                    await event.reply(f"✅ شكراً! تم استلام بياناتك. سأرسل لك السكليف خلال {days} يوم. 📋")
+                    self.conversation_manager.end_session(user_id)
+
+            else:  # custom
+                await event.reply("أبشر اخوي، سيتم التواصل معك قريباً. شكراً! ✅")
+                self.conversation_manager.end_session(user_id)
+
+            socketio.emit('log_update', {"message": f"💬 {sender.first_name if sender else user_id} | {intent} | خطوة {step}"}, to=self.user_id)
+        except Exception as e:
+            add_error("learning_bot", str(e), f"conversation: {self.user_id}")
+            logger.error(f"خطأ في الحوار: {e}")
 
     def get_unknown_requests(self):
         return self.unknown_requests
@@ -695,26 +815,29 @@ class LearningBot:
     def clear_unknown(self):
         self.unknown_requests = []
 
-    def add_service(self, name, desc, questions=None, keywords=None):
+    def get_active_sessions(self):
+        return self.conversation_manager.get_all_info()
+
+    def add_service(self, name, desc, intent=None, questions=None, keywords=None):
         if name and desc:
-            self.knowledge[name] = {
-                "description": desc,
-                "questions": questions or ["شنو التفاصيل؟", "متى تحتاجه؟"],
-                "intent_keywords": keywords or [name]
-            }
-            self.save_knowledge()
+            if not intent:
+                intent = ("sketch" if any(w in name for w in ["سكليف", "سكيتش"]) else
+                          "exam" if "اختبار" in name else
+                          "homework" if any(w in name for w in ["واجب", "حل"]) else "custom")
+            self.keywords[name] = {"reply": desc, "intent": intent}
+            self.save_keywords()
             return True
         return False
 
     def delete_service(self, name):
-        if name in self.knowledge:
-            del self.knowledge[name]
-            self.save_knowledge()
+        if name in self.keywords:
+            del self.keywords[name]
+            self.save_keywords()
             return True
         return False
 
     def get_services(self):
-        return self.knowledge
+        return {k: {"description": v["reply"], "intent": v.get("intent", "custom")} for k, v in self.keywords.items()}
 
     def toggle_reply_in_groups(self):
         self.reply_in_groups = not self.reply_in_groups
@@ -2840,6 +2963,45 @@ def api_learning_status():
     uid = _uid()
     s = load_settings(uid)
     return jsonify({"success": True, "active": s.get("learning_active", False), "reply_in_groups": s.get("learning_reply_groups", False)})
+
+@app.route("/api/learning/active_sessions")
+def api_learning_active_sessions():
+    uid = _uid()
+    bot = get_learning_bot(uid)
+    return jsonify({"success": True, "sessions": bot.get_active_sessions()})
+
+@app.route("/api/learning/keywords")
+def api_learning_keywords():
+    uid = _uid()
+    bot = get_learning_bot(uid)
+    return jsonify({"success": True, "keywords": bot.keywords})
+
+@app.route("/api/learning/teach_keyword", methods=["POST"])
+def api_learning_teach_keyword():
+    uid = _uid()
+    data = request.get_json() or {}
+    keyword = data.get("keyword", "").strip()
+    reply = data.get("reply", "").strip()
+    intent = data.get("intent", "custom")
+    if not keyword or not reply:
+        return jsonify({"success": False, "message": "الكلمة والرد مطلوبان"})
+    bot = get_learning_bot(uid)
+    bot.keywords[keyword] = {"reply": reply, "intent": intent}
+    bot.save_keywords()
+    socketio.emit('log_update', {"message": f"🧠 كلمة جديدة: {keyword} → {intent}"}, to=uid)
+    return jsonify({"success": True, "message": f"تم تعليم الكلمة: {keyword}"})
+
+@app.route("/api/learning/delete_keyword", methods=["POST"])
+def api_learning_delete_keyword():
+    uid = _uid()
+    data = request.get_json() or {}
+    keyword = data.get("keyword", "")
+    bot = get_learning_bot(uid)
+    if keyword in bot.keywords:
+        del bot.keywords[keyword]
+        bot.save_keywords()
+        return jsonify({"success": True, "message": "تم حذف الكلمة"})
+    return jsonify({"success": False, "message": "الكلمة غير موجودة"})
 
 # ========== مسارات الأخطاء والتشخيص والإصلاح ==========
 @app.route("/api/errors")
