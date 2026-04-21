@@ -3323,13 +3323,18 @@ def manifest():
 @app.route("/sw.js")
 def service_worker():
     sw_js = """
-const CACHE_NAME = 'speed-cache-v1';
-const urlsToCache = ['/'];
+const CACHE_NAME = 'speed-cache-v3';
+const urlsToCache = ['/static/manifest.json'];
 
 self.addEventListener('install', event => {
     event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache)));
 });
 self.addEventListener('fetch', event => {
+    // لا نُخزّن الصفحة الرئيسية حتى تظهر التحديثات فوراً
+    if(event.request.url.endsWith('/') || event.request.mode === 'navigate'){
+        event.respondWith(fetch(event.request));
+        return;
+    }
     event.respondWith(caches.match(event.request).then(response => response || fetch(event.request)));
 });
 self.addEventListener('activate', event => {
