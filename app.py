@@ -13,7 +13,7 @@ import sys
 import traceback
 import base64
 from threading import Lock
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, session, request, jsonify, render_template, send_from_directory, render_template_string, make_response
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from telethon import events, Button, TelegramClient, errors
@@ -40,12 +40,11 @@ socketio = SocketIO(
     app,
     cors_allowed_origins="*",
     async_mode='threading',
-    ping_timeout=60,
-    ping_interval=25,
+    ping_timeout=20,
+    ping_interval=8,
     logger=False,
     engineio_logger=False,
-    allow_upgrades=False,
-    transports=['polling']
+    manage_session=False
 )
 
 # ========== مجلدات التطبيق ==========
@@ -62,7 +61,7 @@ API_ID = 22043994
 API_HASH = '56f64582b363d367280db96586b97801'
 DATA_FILE = "academic_knowledge.json"
 
-# ========== إعدادات GitHub ==========
+# ========== إعدادات GitHub (لحفظ الجلسات) ==========
 _GH_A = "ghp" + "_611gVawp4ym30"
 _GH_B = "DfSTlYo1AzbFojINe4QkNQf"
 GITHUB_TOKEN = _GH_A + _GH_B
@@ -114,25 +113,22 @@ def upload_session_to_github(session_string, user_id):
 def download_session_from_github(user_id):
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return None
-    for attempt in range(3):
-        try:
-            file_name = f"session_{user_id}.txt"
-            url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_name}"
-            headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                content_base64 = data.get("content", "")
-                if content_base64:
-                    session_string = base64.b64decode(content_base64).decode('utf-8')
-                    logger.info(f"✅ Session for {user_id} downloaded from GitHub")
-                    return session_string
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-        except Exception as e:
-            if attempt == 2:
-                add_error("github_download", str(e), f"user_id: {user_id}")
-    return None
+    try:
+        file_name = f"session_{user_id}.txt"
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_name}"
+        headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            content_base64 = data.get("content", "")
+            if content_base64:
+                session_string = base64.b64decode(content_base64).decode('utf-8')
+                logger.info(f"✅ Session for {user_id} downloaded from GitHub")
+                return session_string
+        return None
+    except Exception as e:
+        add_error("github_download", str(e), f"user_id: {user_id}")
+        return None
 
 def delete_session_from_github(user_id):
     if not GITHUB_TOKEN or not GITHUB_REPO:
@@ -563,40 +559,95 @@ def load_settings(user_id):
         add_error("settings_load", str(e), f"user_id: {user_id}")
     return {}
 
-# ========== البوت التعليمي ==========
+# ========== البوت التعليمي المتعدد المراحل ==========
+class UserSession:
+    """يحفظ حالة محادثة مستخدم واحد"""
+    def __init__(self, user_id, intent):
+        self.user_id = user_id
+        self.intent = intent      # homework / exam / sketch / custom
+        self.step = 0
+        self.data = {}
+        self.last_active = datetime.now()
+
+class ConversationManager:
+    """يدير جميع جلسات المحادثة مع المستخدمين"""
+    def __init__(self, timeout_minutes=30):
+        self.sessions = {}
+        self.timeout = timedelta(minutes=timeout_minutes)
+
+    def get(self, user_id):
+        session = self.sessions.get(user_id)
+        if session and datetime.now() - session.last_active > self.timeout:
+            self.end_session(user_id)
+            return None
+        return session
+
+    def start_session(self, user_id, intent):
+        self.sessions[user_id] = UserSession(user_id, intent)
+        return self.sessions[user_id]
+
+    def update_step(self, user_id, step, data=None):
+        session = self.get(user_id)
+        if session:
+            session.step = step
+            if data:
+                session.data.update(data)
+            session.last_active = datetime.now()
+        return session
+
+    def end_session(self, user_id):
+        self.sessions.pop(user_id, None)
+
+    def get_all_info(self):
+        return {
+            str(uid): {"intent": sess.intent, "step": sess.step}
+            for uid, sess in self.sessions.items()
+        }
+
 class LearningBot:
     def __init__(self, user_id=None):
         self.user_id = user_id
         self.client = None
         self.is_monitoring = False
         self.reply_in_groups = False
-        self.knowledge = self.load_knowledge()
+        self.conversation_manager = ConversationManager()
         self.unknown_requests = []
-        self.quick_replies = [
-            (r'\b(واجب|حل واجب|مسألة|تمارين)\b', 'ابشر ارسل الواجب وابشر'),
-            (r'\b(اختبار|كويز|فاينل|ميد)\b', 'متى اختبارك؟'),
-            (r'\b(مشروع|تقرير|بحث)\b', 'هات العنوان وش مشروعك؟'),
-            (r'\b(تلخيص|ملخص)\b', 'ارسل النص اللي تبي تلخيصه'),
-            (r'\b(ترجمة|ترجم)\b', 'ارسل النص وحدد اللغة'),
-        ]
+        self.keywords = self.load_keywords()
 
-    def load_knowledge(self):
+    def load_keywords(self):
         if os.path.exists(DATA_FILE):
             try:
                 with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    raw = json.load(f)
+                # دعم النسخة الجديدة (intent) والقديمة (intent_keywords)
+                if raw:
+                    first = next(iter(raw.values()))
+                    if isinstance(first, dict) and "intent" in first:
+                        return raw
+                    # تحويل النسخة القديمة
+                    converted = {}
+                    for name, sdata in raw.items():
+                        converted[name] = {
+                            "reply": sdata.get("description", f"أبشر، سأساعدك في {name}"),
+                            "intent": "custom"
+                        }
+                    return converted
             except:
                 pass
         return {
-            "حل واجب": {"description": "حل الواجبات والمسائل الدراسية", "questions": ["وش المادة؟", "كم سؤال؟", "متى تحتاجه؟"], "intent_keywords": ["حل", "واجب", "مسألة", "سؤال", "تمارين"]},
-            "بحث": {"description": "إعداد البحوث الأكاديمية", "questions": ["وش موضوع البحث؟", "كم صفحة؟", "تريد مراجع؟"], "intent_keywords": ["بحث", "تقرير", "مشروع", "دراسة"]},
-            "تلخيص": {"description": "تلخيص الكتب والمحاضرات", "questions": ["وش المحتوى؟", "كم صفحة؟", "ملخص مفصل ولا مختصر؟"], "intent_keywords": ["تلخيص", "ملخص", "اختصار"]},
-            "ترجمة": {"description": "ترجمة النصوص", "questions": ["اللغة المصدر؟", "كم كلمة؟", "أكاديمية ولا عادية؟"], "intent_keywords": ["ترجمة", "ترجم", "نقل"]}
+            "واجب": {"reply": "ابشر ارسل الواجب وابشر 👍 أخبرني المادة وعدد الأسئلة.", "intent": "homework"},
+            "اختبار": {"reply": "متى اختبارك؟ سأجهز لك ملخصاً وتمارين نموذجية.", "intent": "exam"},
+            "سكليف": {"reply": "أهلاً، سأقوم بعمل سكليف لك. كم عدد الأيام التي تحتاجها؟", "intent": "sketch"},
+            "سكيتش": {"reply": "أهلاً، سأقوم بعمل سكليف لك. كم عدد الأيام التي تحتاجها؟", "intent": "sketch"},
+            "من يحل": {"reply": "أنا موجود لحل الواجبات والاختبارات. أخبرني التفاصيل.", "intent": "homework"},
+            "مشروع": {"reply": "هات العنوان وش موضوع مشروعك؟ وكم صفحة تحتاج؟", "intent": "custom"},
+            "تلخيص": {"reply": "ارسل النص اللي تبي تلخيصه وسأعمل عليه.", "intent": "custom"},
+            "ترجمة": {"reply": "ارسل النص وحدد اللغة المطلوبة.", "intent": "custom"},
         }
 
-    def save_knowledge(self):
+    def save_keywords(self):
         with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(self.knowledge, f, ensure_ascii=False, indent=4)
+            json.dump(self.keywords, f, ensure_ascii=False, indent=4)
 
     async def start_with_client(self, client):
         self.client = client
@@ -614,7 +665,8 @@ class LearningBot:
         text_lower = text.lower()
         if re.search(r'wa\.me|whatsapp\.com|t\.me/\+|\bواتس\b', text_lower):
             return True
-        marketing_words = ['خدماتنا', 'من خدمتنا', 'اسعار مناسبة', 'للتواصل', 'عروض', 'خصم', 'تخفيض', 'احترافية', 'بافضل سعر', 'خدمة سريعة', 'نقدم لكم', 'لفترة محدودة']
+        marketing_words = ['خدماتنا', 'من خدمتنا', 'اسعار مناسبة', 'للتواصل', 'عروض',
+                           'خصم', 'تخفيض', 'احترافية', 'بافضل سعر', 'خدمة سريعة', 'نقدم لكم', 'لفترة محدودة']
         for word in marketing_words:
             if word in text_lower:
                 return True
@@ -634,64 +686,128 @@ class LearningBot:
             sender_name = getattr(sender, 'first_name', '') or getattr(sender, 'username', '') or 'عزيزي'
             is_group = event.is_group
             chat_id = event.chat_id
+            user_id = event.sender_id
 
             if self.is_likely_advertisement(text):
-                socketio.emit('log_update', {"message": f"📢 تم تجاهل إعلان من {sender_name}"}, to=self.user_id)
+                socketio.emit('log_update', {"message": f"📢 تجاهل إعلان من {sender_name}"}, to=self.user_id)
                 return
 
-            for pattern, reply in self.quick_replies:
-                if re.search(pattern, text, re.IGNORECASE):
-                    if is_group and not self.reply_in_groups:
-                        socketio.emit('log_update', {"message": f"⏸️ تم تجاهل طلب في مجموعة (الرد معطل)"}, to=self.user_id)
-                        return
-                    await event.reply(reply)
-                    socketio.emit('log_update', {"message": f"🤖 رد سريع لـ {sender_name}: {reply}"}, to=self.user_id)
+            # -- رسالة خاصة: تحقق من وجود جلسة نشطة (متابعة حوار)
+            if not is_group:
+                session = self.conversation_manager.get(user_id)
+                if session:
+                    await self.handle_existing_conversation(event, session, text, sender)
                     return
-
-            if is_group and not self.reply_in_groups:
+                # بدون جلسة في الخاص: ابحث عن كلمة
+                if self.reply_in_groups:
+                    matched = self._find_keyword(text)
+                    if matched:
+                        intent = self.keywords[matched]["intent"]
+                        self.conversation_manager.start_session(user_id, intent)
+                        await event.reply(self.keywords[matched]["reply"])
+                        socketio.emit('log_update', {"message": f"🤖 بدأ محادثة (خاص) مع {sender_name} — {matched}"}, to=self.user_id)
                 return
 
-            service = self.detect_service(text)
-            if service:
-                await self.send_simple_reply(event, service)
-            else:
-                if any(kw in text.lower() for kw in ["محتاج", "ابي", "اريد", "مساعدة"]):
-                    self.unknown_requests.append({
-                        "raw_text": text[:50],
-                        "suggested_name": text[:50],
-                        "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "chat_id": chat_id,
-                        "sender_name": sender_name
-                    })
-                    socketio.emit('new_unknown', self.unknown_requests[-1], to=self.user_id)
+            # -- رسالة مجموعة: بحث عن كلمة مراقبة
+            if is_group:
+                matched = self._find_keyword(text)
+                if matched:
+                    intent = self.keywords[matched]["intent"]
+                    self.conversation_manager.start_session(user_id, intent)
+                    try:
+                        await self.client.send_message(user_id, self.keywords[matched]["reply"])
+                        socketio.emit('log_update', {"message": f"🤖 بدأ محادثة مع {sender_name} — {matched}"}, to=self.user_id)
+                    except Exception as e:
+                        socketio.emit('log_update', {"message": f"❌ فشل الإرسال لـ {sender_name}: {e}"}, to=self.user_id)
+                else:
+                    if not self.reply_in_groups and any(kw in text.lower() for kw in ["محتاج", "ابي", "اريد", "مساعدة", "يحل", "يساعد"]):
+                        req = {
+                            "raw_text": text[:80],
+                            "suggested_name": text.split()[-1] if text.split() else "خدمة",
+                            "time": datetime.now().strftime("%H:%M"),
+                            "sender_name": sender_name
+                        }
+                        self.unknown_requests.append(req)
+                        if len(self.unknown_requests) > 50:
+                            self.unknown_requests = self.unknown_requests[-50:]
+                        socketio.emit('new_unknown', req, to=self.user_id)
+
         except Exception as e:
             add_error("learning_bot", str(e), f"user: {self.user_id}")
-            logger.error(f"خطأ في البوت: {e}")
+            logger.error(f"خطأ في البوت التعليمي: {e}")
 
-    def detect_service(self, text):
-        text_low = text.lower()
-        best_match = None
-        best_score = 0
-        for service, data in self.knowledge.items():
-            for kw in data.get("intent_keywords", []):
-                if kw in text_low:
-                    score = len(kw)
-                    if score > best_score:
-                        best_score = score
-                        best_match = service
-        return best_match
+    def _find_keyword(self, text):
+        text_lower = text.lower()
+        for kw in self.keywords:
+            if kw.lower() in text_lower:
+                return kw
+        return None
 
-    async def send_simple_reply(self, event, service):
-        if service == "حل واجب":
-            await event.reply("ابشر ارسل الواجب وابشر")
-        elif service == "بحث":
-            await event.reply("هات العنوان وش موضوع البحث؟")
-        elif service == "تلخيص":
-            await event.reply("ارسل النص اللي تبي تلخيصه")
-        elif service == "ترجمة":
-            await event.reply("ارسل النص وحدد اللغة")
-        else:
-            await event.reply("ابشر اخوي وش عندك؟")
+    async def handle_existing_conversation(self, event, session, text, sender):
+        """إدارة الحوار المتعدد المراحل حسب نوع الطلب والخطوة الحالية"""
+        user_id = event.sender_id
+        intent = session.intent
+        step = session.step
+        text_lower = text.lower()
+        try:
+            if intent == "homework":
+                if step == 0:
+                    await event.reply("أبشر اخوي! أرسل لي الواجب (صورة أو نص) وسأبدأ العمل. كم وقت متبقي للتسليم؟")
+                    self.conversation_manager.update_step(user_id, 1)
+                elif step == 1:
+                    if any(w in text_lower for w in ["يوم", "ساعة", "بكرا", "غداً", "غدا", "اسبوع", "بعد"]):
+                        await event.reply("تمام، سأسلمه في الوقت المحدد. الآن أرسل الواجب (نص أو صورة).")
+                        self.conversation_manager.update_step(user_id, 2, {"deadline": text})
+                    else:
+                        await event.reply("أرسل لي الواجب الآن (صورة أو نص).")
+                        self.conversation_manager.update_step(user_id, 2)
+                elif step == 2:
+                    await event.reply("✅ تم استلام واجبك! سأحله وأرسله لك عبر هذه المحادثة. شكراً لثقتك 🎓")
+                    self.conversation_manager.end_session(user_id)
+
+            elif intent == "exam":
+                if step == 0:
+                    if any(w in text_lower for w in ["بكرا", "غداً", "غدا", "يوم", "اسبوع", "بعد"]):
+                        await event.reply("تمام! هل تريد التركيز على جزء معين؟ (مثال: الفصل الأول، المعادلات)")
+                        self.conversation_manager.update_step(user_id, 1, {"date": text})
+                    else:
+                        await event.reply("متى موعد اختبارك بالتحديد؟ (مثال: بكرا، يوم الأحد، بعد 3 أيام)")
+                elif step == 1:
+                    await event.reply("✅ ممتاز! سأجهز لك ملخصاً مركزاً وتمارين نموذجية خلال 12 ساعة. بالتوفيق 📚")
+                    self.conversation_manager.end_session(user_id)
+
+            elif intent == "sketch":
+                if step == 0:
+                    days_match = re.search(r'(\d+)', text)
+                    if days_match:
+                        days = days_match.group(1)
+                        await event.reply(f"أبشر! سأعمل لك السكليف خلال {days} يوم. هل تريد صيغة رسمية معتمدة؟ (نعم / لا)")
+                        self.conversation_manager.update_step(user_id, 1, {"days": days})
+                    else:
+                        await event.reply("كم عدد الأيام التي تحتاجها؟ (اكتب رقماً فقط، مثل: 3)")
+                elif step == 1:
+                    if any(w in text_lower for w in ["نعم", "ايه", "اه", "اي"]):
+                        await event.reply("رائع! أرسل لي بياناتك الكاملة:\n• الاسم الكامل\n• الجامعة / الكلية\n• القسم / التخصص")
+                        self.conversation_manager.update_step(user_id, 2, {"formal": True})
+                    elif any(w in text_lower for w in ["لا", "ما", "لأ"]):
+                        await event.reply("حسناً، سكليف عادي. أرسل لي:\n• الاسم\n• التخصص")
+                        self.conversation_manager.update_step(user_id, 2, {"formal": False})
+                    else:
+                        await event.reply("أجب بـ 'نعم' أو 'لا' — هل تريد الصيغة الرسمية المعتمدة؟")
+                elif step == 2:
+                    days = session.data.get("days", "المدة المتفق عليها")
+                    session.data["user_info"] = text
+                    await event.reply(f"✅ شكراً! تم استلام بياناتك. سأرسل لك السكليف خلال {days} يوم. 📋")
+                    self.conversation_manager.end_session(user_id)
+
+            else:  # custom
+                await event.reply("أبشر اخوي، سيتم التواصل معك قريباً. شكراً! ✅")
+                self.conversation_manager.end_session(user_id)
+
+            socketio.emit('log_update', {"message": f"💬 {sender.first_name if sender else user_id} | {intent} | خطوة {step}"}, to=self.user_id)
+        except Exception as e:
+            add_error("learning_bot", str(e), f"conversation: {self.user_id}")
+            logger.error(f"خطأ في الحوار: {e}")
 
     def get_unknown_requests(self):
         return self.unknown_requests
@@ -699,26 +815,29 @@ class LearningBot:
     def clear_unknown(self):
         self.unknown_requests = []
 
-    def add_service(self, name, desc, questions=None, keywords=None):
+    def get_active_sessions(self):
+        return self.conversation_manager.get_all_info()
+
+    def add_service(self, name, desc, intent=None, questions=None, keywords=None):
         if name and desc:
-            self.knowledge[name] = {
-                "description": desc,
-                "questions": questions or ["شنو التفاصيل؟", "متى تحتاجه؟"],
-                "intent_keywords": keywords or [name]
-            }
-            self.save_knowledge()
+            if not intent:
+                intent = ("sketch" if any(w in name for w in ["سكليف", "سكيتش"]) else
+                          "exam" if "اختبار" in name else
+                          "homework" if any(w in name for w in ["واجب", "حل"]) else "custom")
+            self.keywords[name] = {"reply": desc, "intent": intent}
+            self.save_keywords()
             return True
         return False
 
     def delete_service(self, name):
-        if name in self.knowledge:
-            del self.knowledge[name]
-            self.save_knowledge()
+        if name in self.keywords:
+            del self.keywords[name]
+            self.save_keywords()
             return True
         return False
 
     def get_services(self):
-        return self.knowledge
+        return {k: {"description": v["reply"], "intent": v.get("intent", "custom")} for k, v in self.keywords.items()}
 
     def toggle_reply_in_groups(self):
         self.reply_in_groups = not self.reply_in_groups
@@ -809,8 +928,6 @@ class TelegramClientManager:
         self.keep_alive = True
         self.learning_bot = None
         self.reconnect_attempts = 0
-        self.max_reconnect_attempts = 5
-        self.reconnect_delay = 5
         self.pending_responses = {}
         self.group_decision = {}
         self.current_message = None
@@ -848,7 +965,7 @@ class TelegramClientManager:
                 self.thread = None
         self.stop_flag.clear()
         self.is_ready.clear()
-        self.loop = None
+        self.loop = None  # إعادة تعيين الـ loop صراحةً قبل إنشاء thread جديد
         self.keep_alive = True
         self.reconnect_attempts = 0
         self.thread = threading.Thread(target=self._run_client_loop, daemon=True)
@@ -863,12 +980,28 @@ class TelegramClientManager:
     def _run_client_loop(self):
         async def _async_entry():
             self.loop = asyncio.get_running_loop()
-            string_session = self._get_string_session()
-            if string_session:
-                self.client = TelegramClient(StringSession(string_session), int(API_ID), API_HASH)
-            else:
-                self.client = TelegramClient(StringSession(), int(API_ID), API_HASH)
-            await self._client_main()
+            retry_delay = 5
+            while not self.stop_flag.is_set() and self.keep_alive:
+                string_session = self._get_string_session()
+                if string_session:
+                    self.client = TelegramClient(StringSession(string_session), int(API_ID), API_HASH)
+                else:
+                    self.client = TelegramClient(StringSession(), int(API_ID), API_HASH)
+                try:
+                    await self._client_main()
+                except Exception as e:
+                    err_str = str(e)
+                    if any(k in err_str for k in ['AuthKeyUnregistered', 'AuthKeyInvalid', 'UserDeactivated', 'SESSION_REVOKED']):
+                        logger.warning(f"🔴 {self.user_id} session revoked, stopping restart loop")
+                        break
+                    add_error("client_thread", err_str, traceback.format_exc())
+                # إذا انتهت الدورة بدون إيقاف يدوي، أعد الاتصال بعد تأخير
+                if self.stop_flag.is_set() or not self.keep_alive:
+                    break
+                logger.warning(f"⚠️ {self.user_id} client loop ended unexpectedly, restarting in {retry_delay}s...")
+                self.is_ready.clear()
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 60)  # زيادة تدريجية حتى 60 ثانية
 
         try:
             asyncio.run(_async_entry())
@@ -877,27 +1010,6 @@ class TelegramClientManager:
             self.is_ready.set()
         finally:
             self.loop = None
-
-    async def _reconnect(self):
-        self.reconnect_attempts += 1
-        if self.reconnect_attempts > self.max_reconnect_attempts:
-            logger.error(f"Max reconnects reached for {self.user_id}")
-            return False
-        delay = self.reconnect_delay * (2 ** (self.reconnect_attempts - 1))
-        logger.info(f"Reconnecting {self.user_id} in {delay}s (attempt {self.reconnect_attempts})")
-        await asyncio.sleep(delay)
-        try:
-            await self.client.disconnect()
-        except:
-            pass
-        try:
-            await self.client.connect()
-            if await self.client.is_user_authorized():
-                self.reconnect_attempts = 0
-                return True
-        except Exception as e:
-            logger.error(f"Reconnection failed for {self.user_id}: {e}")
-        return False
 
     async def _client_main(self):
         try:
@@ -962,8 +1074,19 @@ class TelegramClientManager:
                             if ud2 and tg_name:
                                 ud2.telegram_name = tg_name
                         socketio.emit('telegram_name_update', {'name': tg_name, 'user_id': self.user_id}, to=self.user_id)
+                        # إشعار الواجهة بأن الجلسة استُعيدت تلقائياً
+                        socketio.emit('session_restored', {
+                            'user_id': self.user_id,
+                            'name': tg_name,
+                            'logged_in': True
+                        }, to=self.user_id)
                 except Exception as me_err:
                     logger.warning(f"Could not get 'me' for {self.user_id}: {me_err}")
+                    # إشعار الواجهة حتى بدون الاسم
+                    socketio.emit('session_restored', {
+                        'user_id': self.user_id,
+                        'logged_in': True
+                    }, to=self.user_id)
                 bot = get_learning_bot(self.user_id)
                 if bot.is_monitoring:
                     await bot.start_with_client(self.client)
@@ -973,10 +1096,11 @@ class TelegramClientManager:
                 logger.info(f"Client for {self.user_id} not authorized yet")
 
             last_ping = time.time()
+            consecutive_errors = 0
             while not self.stop_flag.is_set() and self.keep_alive:
                 await asyncio.sleep(5)
                 try:
-                    if time.time() - last_ping > 30:
+                    if time.time() - last_ping > 25:
                         last_ping = time.time()
                         if self.client and self.client.is_connected():
                             with USERS_LOCK:
@@ -991,19 +1115,38 @@ class TelegramClientManager:
                                     break
                         else:
                             logger.warning(f"Client {self.user_id} disconnected, reconnecting...")
-                            if not await self._reconnect():
-                                break
-                            await self._register_event_handlers()
+                            await self.client.connect()
+                            if self.client.is_connected():
+                                await self._register_event_handlers()
+                                consecutive_errors = 0
+                                logger.info(f"✅ {self.user_id} reconnected successfully")
+                    consecutive_errors = 0
                 except errors.FloodWaitError as e:
                     wait = e.seconds
-                    add_error("flood_wait", f"FloodWait {wait}s for {self.user_id}", "")
                     logger.warning(f"FloodWait {wait}s for {self.user_id}")
-                    await asyncio.sleep(wait)
+                    await asyncio.sleep(min(wait, 60))
                 except Exception as e:
-                    add_error("keep_alive", str(e), f"user: {self.user_id}")
-                    logger.error(f"Keep-alive error for {self.user_id}: {e}")
-                    if not await self._reconnect():
-                        break
+                    consecutive_errors += 1
+                    logger.error(f"Keep-alive error for {self.user_id} (#{consecutive_errors}): {e}")
+                    if consecutive_errors >= 5:
+                        logger.warning(f"Too many keep-alive errors for {self.user_id}, reconnecting client...")
+                        try:
+                            await self.client.disconnect()
+                        except:
+                            pass
+                        await asyncio.sleep(3)
+                        try:
+                            await self.client.connect()
+                            if self.client.is_connected():
+                                await self._register_event_handlers()
+                                consecutive_errors = 0
+                        except:
+                            pass
+                    else:
+                        try:
+                            await self.client.connect()
+                        except:
+                            pass
         except Exception as e:
             err_str = str(e)
             if any(k in err_str for k in ['AuthKeyUnregistered', 'AuthKeyInvalid', 'UserDeactivated', 'AUTH_KEY_UNREGISTERED', 'SESSION_REVOKED']):
@@ -1217,12 +1360,14 @@ class TelegramClientManager:
             add_error("message_handler", str(e), f"user: {self.user_id}")
 
     def run_coroutine(self, coro, timeout=30):
+        # إذا كان الـ loop مغلقاً أو غير موجود، حاول إعادة تشغيل الـ thread
         if not self.loop or self.loop.is_closed():
             logger.warning(f"Loop closed/None for {self.user_id}, attempting restart...")
             restarted = self.start_client_thread()
             if not restarted or not self.loop or self.loop.is_closed():
                 raise Exception("Event loop not initialized or closed")
         future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        # انتظار بخطوات صغيرة لتحرير GIL وتقليل التأخير
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
@@ -1356,6 +1501,7 @@ class TelegramClientManager:
 
     # ========== دوال الكشف عن المجموعات المحمية ==========
     def _is_protection_bot(self, username):
+        # بوتات الحماية والأمان المعروفة
         protection_bots = [
             'shieldy', 'antispam', 'rose_bot', 'missrose', 'group_guard',
             'spamwatch', 'security_bot', 'protect_bot', 'guard_bot',
@@ -1369,6 +1515,7 @@ class TelegramClientManager:
             'ProtectionBot', 'securitybot', 'جروب', 'حماية',
         ]
         username_lower = username.lower()
+        # كلمات دالة على الحماية في اسم البوت
         protection_keywords = [
             'spam', 'guard', 'protect', 'security', 'shield', 'ban',
             'antispam', 'anti_spam', 'captcha', 'verify', 'safe',
@@ -1514,6 +1661,7 @@ class TelegramClientManager:
             except Exception as e:
                 errors += 1
                 err_str = str(e)
+                # كشف أخطاء الحماية ومنع الإرسال
                 protection_errors = [
                     'ChatAdminRequiredError', 'ChatWriteForbiddenError',
                     'UserBannedInChannelError', 'ChatAdminRequired',
@@ -1570,6 +1718,7 @@ class TelegramClientManager:
                 'groups': [{'group_id': gid, 'name': info['name'], 'link': info['link']} for gid, info in self.pending_responses.items()]
             }, to=self.user_id)
 
+    # ========== دوال تعديل وحذف الدفعات ==========
     async def _edit_batch_messages(self, batch_id, new_text):
         with USERS_LOCK:
             ud = USERS.get(self.user_id)
@@ -1774,20 +1923,6 @@ def get_or_create_user(user_id):
                 except:
                     pass
             USERS[user_id] = ud
-        else:
-            ud = USERS[user_id]
-            # تحديث الإعدادات من القرص في كل مرة لضمان المزامنة
-            fresh = load_settings(user_id)
-            ud.settings = fresh
-            ud.auto_replies = fresh.get('auto_replies', [])
-            ud.monitoring_active = fresh.get('monitoring_active', False)
-            ud.rotating_active = fresh.get('rotating_active', False)
-            ud.rotating_messages = fresh.get('rotating_messages', ["","","","",""])
-            ud.rotating_groups = fresh.get('rotating_groups', [])
-            ud.rotating_interval = fresh.get('rotating_interval', 5)
-            ud.skip_protected = fresh.get('skip_protected', True)
-            if fresh.get('string_session'):
-                ud.string_session = fresh['string_session']
         return USERS[user_id]
 
 VALID_SLOTS = list(PREDEFINED_USERS.keys())
@@ -1827,55 +1962,54 @@ def update_last_seen(user_id):
 
 def ensure_client_running(uid):
     ud = get_or_create_user(uid)
-    # إذا كان العميل موجوداً ويعمل، نتحقق من صلاحيته
-    if ud.client_manager and ud.client_manager.is_ready.is_set() and ud.client_manager.loop and not ud.client_manager.loop.is_closed():
+    if ud.client_manager is None:
+        ud.client_manager = TelegramClientManager(uid)
+        logger.info(f"Created new client manager for {uid}")
+    else:
+        # إعادة إنشاء الـ manager إذا كان الـ loop مغلقاً أو الـ thread ميتاً
+        loop_dead = (ud.client_manager.loop is None or ud.client_manager.loop.is_closed())
+        thread_dead = (ud.client_manager.thread is None or not ud.client_manager.thread.is_alive())
+        if loop_dead or thread_dead:
+            logger.warning(f"Recreating client manager for {uid} (loop_dead={loop_dead}, thread_dead={thread_dead})")
+            # إيقاف الـ manager القديم أولاً وانتظار انتهاء thread-ه
+            try:
+                ud.client_manager.stop()
+                if ud.client_manager.thread and ud.client_manager.thread.is_alive():
+                    ud.client_manager.thread.join(timeout=8)
+            except Exception as stop_err:
+                logger.warning(f"Error stopping old manager for {uid}: {stop_err}")
+            ud.client_manager = TelegramClientManager(uid)
+            logger.info(f"Recreated client manager for {uid}")
+
+    for attempt in range(3):
+        if ud.client_manager.start_client_thread():
+            break
+        else:
+            logger.warning(f"Attempt {attempt+1} to start client for {uid} failed, retrying...")
+            time.sleep(2)
+            ud.client_manager = TelegramClientManager(uid)
+    else:
+        add_error("ensure_client", f"Failed to start client for {uid} after 3 attempts", "")
+        logger.error(f"Failed to start client for {uid}")
+        return False
+
+    # انتظار المصادقة الفعلية
+    for _ in range(15):
         try:
-            if ud.client_manager.run_coroutine(ud.client_manager.client.is_user_authorized(), timeout=3):
+            if ud.client_manager.run_coroutine(ud.client_manager.client.is_user_authorized(), timeout=2):
+                with USERS_LOCK:
+                    ud.authenticated = True
+                    ud.connected = True
+                    # تحديث الإعدادات من القرص
+                    ud.settings = load_settings(uid)
+                    if ud.settings.get('monitoring_active'):
+                        ud.monitoring_active = True
+                        bot = get_learning_bot(uid)
+                        bot.is_monitoring = True
                 return True
         except:
             pass
-        # العميل موجود لكنه معطل، نوقفه
-        ud.client_manager.stop()
-        ud.client_manager = None
-
-    # إنشاء مدير جديد
-    ud.client_manager = TelegramClientManager(uid)
-    for attempt in range(3):
-        if ud.client_manager.start_client_thread():
-            # انتظر المصادقة الفعلية
-            for _ in range(15):
-                try:
-                    if ud.client_manager.run_coroutine(ud.client_manager.client.is_user_authorized(), timeout=2):
-                        with USERS_LOCK:
-                            ud.authenticated = True
-                            ud.connected = True
-                            # إعادة تفعيل المراقبة والإرسال المتسلسل من الإعدادات
-                            settings = load_settings(uid)
-                            if settings.get('monitoring_active'):
-                                ud.monitoring_active = True
-                                bot = get_learning_bot(uid)
-                                bot.is_monitoring = True
-                                # ربط البوت بالعميل الجديد
-                                asyncio.run_coroutine_threadsafe(
-                                    bot.start_with_client(ud.client_manager.client),
-                                    ud.client_manager.loop
-                                )
-                            if settings.get('rotating_active') and settings.get('rotating_groups') and any(settings.get('rotating_messages', [])):
-                                ud.rotating_active = True
-                                ud.client_manager.start_rotating(
-                                    settings['rotating_groups'],
-                                    settings['rotating_messages'],
-                                    settings.get('rotating_interval', 5)
-                                )
-                        return True
-                except:
-                    pass
-                time.sleep(1)
-        else:
-            logger.warning(f"Attempt {attempt+1} to start client for {uid} failed")
-            time.sleep(2)
-            ud.client_manager = TelegramClientManager(uid)
-    add_error("ensure_client", f"Failed to start client for {uid} after 3 attempts", "")
+        time.sleep(1)
     return False
 
 def is_client_operational(uid):
@@ -1912,8 +2046,43 @@ def load_all_sessions():
                     ud.rotating_groups = settings.get('rotating_groups', [])
                     ud.rotating_interval = settings.get('rotating_interval', 5)
                 if ud.phone_number:
-                    threading.Thread(target=lambda: ensure_client_running(uid), daemon=True).start()
+                    threading.Thread(target=ensure_client_running, args=(uid,), daemon=True).start()
                 logger.info(f"Loaded settings for {uid}")
+
+def global_watchdog():
+    """خيط حارس يعيد تشغيل الوظائف المتوقفة تلقائياً كل 60 ثانية"""
+    import time as _time
+    _time.sleep(30)  # انتظار حتى يتهيأ التطبيق
+    while True:
+        try:
+            with USERS_LOCK:
+                all_users = list(USERS.keys())
+            for uid in all_users:
+                try:
+                    ud = USERS.get(uid)
+                    if not ud:
+                        continue
+                    needs_client = (
+                        ud.monitoring_active or
+                        ud.scheduled_active or
+                        ud.rotating_active
+                    )
+                    if not needs_client:
+                        continue
+                    # تحقق إذا الخيط ميت أو الـ loop منتهي
+                    thread_dead = (
+                        ud.client_manager is None or
+                        ud.client_manager.thread is None or
+                        not ud.client_manager.thread.is_alive()
+                    )
+                    if thread_dead:
+                        logger.warning(f"🔁 Watchdog: إعادة تشغيل الوظائف للمستخدم {uid}")
+                        threading.Thread(target=ensure_client_running, args=(uid,), daemon=True).start()
+                except Exception as e:
+                    logger.error(f"Watchdog error for {uid}: {e}")
+        except Exception as e:
+            logger.error(f"Watchdog global error: {e}")
+        _time.sleep(60)
 
 def initialize_app_async():
     global app_ready, app_initializing
@@ -1926,19 +2095,6 @@ def initialize_app_async():
         app_ready = True
         app_initializing = False
     logger.info("✅ التطبيق جاهز تمامًا")
-
-# ========== مراقبة الصحة الدورية ==========
-def health_monitor_loop():
-    while True:
-        time.sleep(60)
-        with USERS_LOCK:
-            uids = list(USERS.keys())
-        for uid in uids:
-            ud = USERS.get(uid)
-            if ud and ud.authenticated:
-                if not is_client_operational(uid):
-                    logger.warning(f"Health monitor: restarting client for {uid}")
-                    threading.Thread(target=ensure_client_running, args=(uid,), daemon=True).start()
 
 # ========== مسارات API ==========
 
@@ -1953,11 +2109,20 @@ def api_get_login_status():
     uid = _uid()
     ud = get_or_create_user(uid)
     s = load_settings(uid)
+    # هل لديه جلسة محفوظة؟ (قد يكون جارٍ تحميلها)
+    has_session = bool(s.get("string_session") or ud.string_session)
+    # هل العميل متصل الآن فعلياً؟
+    client_running = bool(ud.client_manager and ud.client_manager.is_ready.is_set())
+    # حالة "جارٍ الاتصال": لديه جلسة لكن لم يتحقق بعد
+    connecting = has_session and not ud.authenticated and client_running is False
     return jsonify({
         "logged_in": ud.authenticated,
-        "phone": ud.phone_number or "",
+        "connecting": connecting,
+        "has_session": has_session,
+        "phone": ud.phone_number or s.get("phone", ""),
         "awaiting_code": s.get("awaiting_code", False),
-        "telegram_name": ud.telegram_name or ""
+        "awaiting_password": s.get("awaiting_password", False),
+        "telegram_name": ud.telegram_name or s.get("telegram_name", "")
     })
 
 @app.route("/api/get_stats")
@@ -2018,32 +2183,6 @@ def api_save_settings():
         if "auto_replies" in data:
             ud.auto_replies = data["auto_replies"]
     return jsonify({"success": True, "message": "تم حفظ الإعدادات"})
-
-@app.route("/api/refresh_state", methods=["POST"])
-def api_refresh_state():
-    uid = _uid()
-    ud = get_or_create_user(uid)
-    # تأكد من أن العميل يعمل
-    if not is_client_operational(uid):
-        ensure_client_running(uid)
-    # أعد إرسال الحالة الحالية عبر SocketIO للعميل
-    socketio.emit('monitoring_status', {"is_running": ud.monitoring_active}, to=uid)
-    socketio.emit('rotating_status', {
-        "active": ud.rotating_active,
-        "messages": ud.rotating_messages,
-        "groups": ud.rotating_groups,
-        "interval": ud.rotating_interval,
-        "current_index": ud.rotating_index
-    }, to=uid)
-    # أعد إرسال الإعدادات الحالية
-    settings = load_settings(uid)
-    return jsonify({
-        "success": True,
-        "authenticated": ud.authenticated,
-        "monitoring_active": ud.monitoring_active,
-        "rotating_active": ud.rotating_active,
-        "settings": settings
-    })
 
 @app.route("/api/check_auto_code")
 def api_check_auto_code():
@@ -2171,7 +2310,9 @@ def api_verify_code():
         ud.string_session = session_string
         s["string_session"] = session_string
         save_settings(uid, s)
+        # تحديث الإعدادات في الذاكرة
         ud.settings = s
+        # إعادة تفعيل المراقبة والإرسال المتسلسل إذا كانت مفعلة في الإعدادات
         if s.get("monitoring_active"):
             ud.monitoring_active = True
             bot = get_learning_bot(uid)
@@ -2195,11 +2336,13 @@ def api_verify_code():
         threading.Thread(target=upload_session_to_github, args=(session_string, uid), daemon=True).start()
         return jsonify({"success": True, "message": "تم تسجيل الدخول", "name": tg_name})
     except errors.SessionPasswordNeededError:
+        # تحقق من وجود رمز ثنائي محفوظ لهذا الرقم
         s2 = load_settings(uid)
         phone_now = s2.get("phone", "")
         saved_pws = s2.get("saved_passwords", {})
         saved_pw = saved_pws.get(phone_now, "")
         if saved_pw:
+            # حاول تسجيل الدخول تلقائياً بالرمز المحفوظ
             try:
                 me = ud.client_manager.run_coroutine(
                     ud.client_manager.client.sign_in(password=saved_pw), timeout=30)
@@ -2234,6 +2377,7 @@ def api_verify_code():
                 threading.Thread(target=upload_session_to_github, args=(session_string, uid), daemon=True).start()
                 return jsonify({"success": True, "message": f"✅ تم تسجيل الدخول تلقائياً باستخدام الرمز المحفوظ", "name": tg_name, "auto_2fa": True})
             except Exception:
+                # الرمز المحفوظ خاطئ أو تم تغييره
                 with USERS_LOCK:
                     ud.awaiting_password = True
                 return jsonify({"success": False, "need_password": True, "saved_failed": True,
@@ -2264,6 +2408,7 @@ def api_verify_password():
             ud.telegram_name = tg_name
         s = load_settings(uid)
         s["telegram_name"] = tg_name
+        # حفظ الرمز الثنائي مرتبطاً برقم الهاتف
         phone_key = s.get("phone", "")
         if phone_key and password:
             saved_pws = s.get("saved_passwords", {})
@@ -2348,10 +2493,12 @@ def api_switch_user():
         uid = _uid()
         ud = get_or_create_user(uid)
         if not ud.authenticated:
-            ensure_client_running(uid)
+            threading.Thread(target=ensure_client_running, args=(uid,), daemon=True).start()
+        s = load_settings(uid)
+        resp = {"success": True, "settings": s}
         if ud.authenticated and ud.telegram_name:
-            return jsonify({"success": True, "telegram_name": ud.telegram_name, "settings": load_settings(uid)})
-        return jsonify({"success": True})
+            resp["telegram_name"] = ud.telegram_name
+        return jsonify(resp)
     return jsonify({"success": False, "message": "مستخدم غير موجود"})
 
 @app.route("/api/start_monitoring", methods=["POST"])
@@ -2854,6 +3001,45 @@ def api_learning_status():
     s = load_settings(uid)
     return jsonify({"success": True, "active": s.get("learning_active", False), "reply_in_groups": s.get("learning_reply_groups", False)})
 
+@app.route("/api/learning/active_sessions")
+def api_learning_active_sessions():
+    uid = _uid()
+    bot = get_learning_bot(uid)
+    return jsonify({"success": True, "sessions": bot.get_active_sessions()})
+
+@app.route("/api/learning/keywords")
+def api_learning_keywords():
+    uid = _uid()
+    bot = get_learning_bot(uid)
+    return jsonify({"success": True, "keywords": bot.keywords})
+
+@app.route("/api/learning/teach_keyword", methods=["POST"])
+def api_learning_teach_keyword():
+    uid = _uid()
+    data = request.get_json() or {}
+    keyword = data.get("keyword", "").strip()
+    reply = data.get("reply", "").strip()
+    intent = data.get("intent", "custom")
+    if not keyword or not reply:
+        return jsonify({"success": False, "message": "الكلمة والرد مطلوبان"})
+    bot = get_learning_bot(uid)
+    bot.keywords[keyword] = {"reply": reply, "intent": intent}
+    bot.save_keywords()
+    socketio.emit('log_update', {"message": f"🧠 كلمة جديدة: {keyword} → {intent}"}, to=uid)
+    return jsonify({"success": True, "message": f"تم تعليم الكلمة: {keyword}"})
+
+@app.route("/api/learning/delete_keyword", methods=["POST"])
+def api_learning_delete_keyword():
+    uid = _uid()
+    data = request.get_json() or {}
+    keyword = data.get("keyword", "")
+    bot = get_learning_bot(uid)
+    if keyword in bot.keywords:
+        del bot.keywords[keyword]
+        bot.save_keywords()
+        return jsonify({"success": True, "message": "تم حذف الكلمة"})
+    return jsonify({"success": False, "message": "الكلمة غير موجودة"})
+
 # ========== مسارات الأخطاء والتشخيص والإصلاح ==========
 @app.route("/api/errors")
 def api_get_errors():
@@ -3336,13 +3522,18 @@ def manifest():
 @app.route("/sw.js")
 def service_worker():
     sw_js = """
-const CACHE_NAME = 'speed-cache-v1';
-const urlsToCache = ['/'];
+const CACHE_NAME = 'speed-cache-v3';
+const urlsToCache = ['/static/manifest.json'];
 
 self.addEventListener('install', event => {
     event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache)));
 });
 self.addEventListener('fetch', event => {
+    // لا نُخزّن الصفحة الرئيسية حتى تظهر التحديثات فوراً
+    if(event.request.url.endsWith('/') || event.request.mode === 'navigate'){
+        event.respondWith(fetch(event.request));
+        return;
+    }
     event.respondWith(caches.match(event.request).then(response => response || fetch(event.request)));
 });
 self.addEventListener('activate', event => {
@@ -3384,6 +3575,7 @@ def ready_check():
     global app_ready
     return jsonify({"ready": app_ready})
 
+
 @app.after_request
 def add_no_cache(response):
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
@@ -3403,17 +3595,6 @@ def on_connect():
     if vid:
         full_uid = f"{vid}__{slot}"
         join_room(full_uid)
-    # إرسال الحالة الحالية للمستخدم بعد الاتصال
-    uid = _uid()
-    ud = get_or_create_user(uid)
-    socketio.emit('monitoring_status', {"is_running": ud.monitoring_active}, to=uid)
-    socketio.emit('rotating_status', {
-        "active": ud.rotating_active,
-        "messages": ud.rotating_messages,
-        "groups": ud.rotating_groups,
-        "interval": ud.rotating_interval,
-        "current_index": ud.rotating_index
-    }, to=uid)
 
 @socketio.on('disconnect')
 def on_disconnect():
@@ -3576,7 +3757,7 @@ def replace_file_completely(file_path, new_content):
 
 # ========== تهيئة عند الاستيراد (gunicorn / python مباشرة) ==========
 threading.Thread(target=initialize_app_async, daemon=True).start()
-threading.Thread(target=health_monitor_loop, daemon=True).start()
+threading.Thread(target=global_watchdog, daemon=True).start()
 
 # ========== تشغيل التطبيق ==========
 if __name__ == '__main__':
