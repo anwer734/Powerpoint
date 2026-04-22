@@ -1222,28 +1222,31 @@ function updateLoginUI(data){
     } else { icon.textContent='❌'; text.textContent='غير مسجل دخول'; text.style.color='var(--text-muted)'; btnLogin.style.display='flex'; btnLogout.style.display='none'; updateConnectionStatus(false); }
     isConnected=data.logged_in;
     if(data.logged_in && window._reconnectTimer){ clearInterval(window._reconnectTimer); window._reconnectTimer=null; }
+    setMonitoringUIState(data.monitoring_active || false);
 }
 function updateConnectionStatus(connected,type){ const badge=document.getElementById('connectionStatus'); const text=document.getElementById('connectionText'); badge.className='status-badge '+(connected?'connected':(type==='awaiting'?'awaiting':'disconnected')); text.textContent=connected?'متصل ✓':(type==='awaiting'?'في الانتظار...':'غير متصل'); }
-function updateMonitoringUI(active){ 
+function setMonitoringUIState(active){
     const indicator = document.getElementById('monitoringIndicator');
     const subLabel = document.getElementById('monitoringSubLabel');
     const btnStart = document.getElementById('btnStartMonitor');
     const btnStop = document.getElementById('btnStopMonitor');
-    if(active){ 
-        if(indicator) indicator.style.display='inline-block'; 
-        if(subLabel) subLabel.textContent='المراقبة تعمل'; 
-        if(subLabel) subLabel.style.color='var(--success)'; 
-        if(btnStart) btnStart.style.display='none'; 
-        if(btnStop) btnStop.style.display='flex'; 
-        showToast('✅ تم تشغيل المراقبة', 'success');
-    } else{ 
-        if(indicator) indicator.style.display='none'; 
-        if(subLabel) subLabel.textContent='المراقبة متوقفة'; 
-        if(subLabel) subLabel.style.color='var(--text-muted)'; 
-        if(btnStart) btnStart.style.display='flex'; 
-        if(btnStop) btnStop.style.display='none'; 
-        showToast('⏹ تم إيقاف المراقبة', 'info');
-    } 
+    if(active){
+        if(indicator) indicator.style.display='inline-block';
+        if(subLabel){ subLabel.textContent='المراقبة تعمل'; subLabel.style.color='var(--success)'; }
+        if(btnStart) btnStart.style.display='none';
+        if(btnStop) btnStop.style.display='flex';
+    } else {
+        if(indicator) indicator.style.display='none';
+        if(subLabel){ subLabel.textContent='المراقبة متوقفة'; subLabel.style.color='var(--text-muted)'; }
+        if(btnStart) btnStart.style.display='flex';
+        if(btnStop) btnStop.style.display='none';
+    }
+}
+function updateMonitoringUI(active){ 
+    setMonitoringUIState(active);
+    if(active){ showToast('✅ تم تشغيل المراقبة', 'success'); }
+    else { showToast('⏹ تم إيقاف المراقبة', 'info'); }
+
 }
 function clearSettingsUI(){
     const phDisp=document.getElementById('loginPhone_display'); if(phDisp) phDisp.textContent='';
@@ -1256,7 +1259,13 @@ function clearSettingsUI(){
     watchWords=[];
     const kwIn=document.getElementById('rawKeywordsInput'); if(kwIn) kwIn.value='';
     updateKeywordsPreview();
-    const autoReplyList=document.getElementById('autoReplyList'); if(autoReplyList) autoReplyList.innerHTML='';
+    autoReplies=[]; renderAutoReplies();
+    setMonitoringUIState(false);
+    learningBotActive=false; learningReplyGroupsActive=false; updateLearningUI();
+    rotActive=false; rotMessages=['','','','','']; rotGroups=[]; rotInterval=5;
+    for(let i=0;i<5;i++){ const el=document.getElementById('rotMsg'+i); if(el) el.value=''; }
+    renderRotGroups();
+    const rotStat=document.getElementById('rotatingStatusBox'); if(rotStat) rotStat.style.display='none';
 }
 function loadSettingsToUI(settings){
     clearSettingsUI();
