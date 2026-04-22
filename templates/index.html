@@ -549,6 +549,7 @@
 <script>
 let socket;
 let currentUserId = '{{ current_user_id }}';
+const PREDEFINED_USERS = {{ predefined_users | tojson }};
 let isConnected = false;
 let groups = [];
 let watchWords = [];
@@ -1244,7 +1245,21 @@ function updateMonitoringUI(active){
         showToast('⏹ تم إيقاف المراقبة', 'info');
     } 
 }
+function clearSettingsUI(){
+    const phDisp=document.getElementById('loginPhone_display'); if(phDisp) phDisp.textContent='';
+    const ph=document.getElementById('loginPhone'); if(ph) ph.value='';
+    const sm=document.getElementById('sendMessage'); if(sm) sm.value='';
+    const si=document.getElementById('sendInterval'); if(si) si.value='';
+    savedImagePath=null;
+    const imgTag=document.getElementById('savedImageTag'); if(imgTag) imgTag.style.display='none';
+    groups=[]; renderGroups();
+    watchWords=[];
+    const kwIn=document.getElementById('rawKeywordsInput'); if(kwIn) kwIn.value='';
+    updateKeywordsPreview();
+    const autoReplyList=document.getElementById('autoReplyList'); if(autoReplyList) autoReplyList.innerHTML='';
+}
 function loadSettingsToUI(settings){
+    clearSettingsUI();
     if(settings.phone){ document.getElementById('loginPhone_display').textContent=settings.phone; const ph=document.getElementById('loginPhone'); if(ph) ph.value=settings.phone; }
     if(settings.message) document.getElementById('sendMessage').value=settings.message;
     if(settings.interval) document.getElementById('sendInterval').value=settings.interval;
@@ -1255,6 +1270,10 @@ function loadSettingsToUI(settings){
         watchWords=settings.watch_words;
         document.getElementById('rawKeywordsInput').value = watchWords.join('\n');
         updateKeywordsPreview();
+    }
+    if(settings.auto_replies && settings.auto_replies.length){
+        autoReplies = settings.auto_replies;
+        renderAutoReplies();
     }
 }
 function openLoginModal(step){ document.getElementById('loginModal').classList.add('open'); const s=step||1; document.getElementById('loginStep1').style.display=s===1?'block':'none'; document.getElementById('loginStep2').style.display=s===2?'block':'none'; document.getElementById('loginStep3').style.display=s===3?'block':'none'; }
@@ -1309,7 +1328,22 @@ async function startLogin(event){
 async function verifyCode(event){ const code=document.getElementById('verifyCode').value.trim(); if(!code){showToast('أدخل كود التحقق','error');return;} const btn=event.currentTarget; btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> جارٍ التحقق...'; stopAutoCodePolling(); try{ const resp=await fetch('/api/verify_code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})}); const data=await resp.json(); showToast(data.message,data.success?'success':'error'); addLog(data.message,data.success?'success':'alert'); if(data.success){ closeLoginModal(); refreshStatus(); } else if(data.need_password){ document.getElementById('loginStep2').style.display='none'; document.getElementById('loginStep3').style.display='block'; const alertBox=document.getElementById('savedPwFailedAlert'); if(alertBox){ alertBox.style.display=data.saved_failed?'block':'none'; } document.getElementById('twoFactorPass').value=''; document.getElementById('twoFactorPass').placeholder=data.saved_failed?'أدخل رمز التحقق الثنائي الجديد':'أدخل كلمة المرور'; } } catch(e){ showToast('خطأ في التحقق','error'); } btn.disabled=false; btn.innerHTML='<i class="fas fa-check"></i> تحقق من الكود'; }
 async function verifyPassword(event){ const pass=document.getElementById('twoFactorPass').value; if(!pass){showToast('أدخل كلمة المرور','error');return;} const btn=event.currentTarget; btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> جارٍ التحقق...'; try{ const resp=await fetch('/api/verify_password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pass})}); const data=await resp.json(); showToast(data.message,data.success?'success':'error'); addLog(data.message,data.success?'success':'alert'); if(data.success){ const alertBox=document.getElementById('savedPwFailedAlert'); if(alertBox) alertBox.style.display='none'; closeLoginModal(); refreshStatus(); } else { showToast(data.message||'كلمة المرور خاطئة','error'); } } catch(e){ showToast('خطأ','error'); } btn.disabled=false; btn.innerHTML='<i class="fas fa-unlock"></i> تأكيد'; }
 async function doLogout(){ if(!confirm('تسجيل الخروج؟')) return; const resp=await fetch('/api/reset_login',{method:'POST'}); const data=await resp.json(); showToast(data.message,data.success?'success':'error'); if(data.success){ savedImagePath=null; refreshStatus(); } }
-async function switchUser(userId){ const resp=await fetch('/api/switch_user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:userId})}); const data=await resp.json(); if(data.success){ currentUserId=userId; socket.emit('join_user_room',{user_id:userId}); document.querySelectorAll('.user-btn').forEach(b=>{b.classList.remove('active');}); const btn=document.getElementById('userBtn_'+userId); if(btn) btn.classList.add('active'); if(data.telegram_name){ const nameSpan=document.getElementById('userBtnName_'+userId); if(nameSpan) nameSpan.textContent=data.telegram_name; } showToast(data.message,'success'); addLog(data.message,'info'); refreshStatus(); } else showToast(data.message,'error'); }
+async function switchUser(userId){
+    clearSettingsUI();
+    const resp=await fetch('/api/switch_user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:userId})});
+    const data=await resp.json();
+    if(data.success){
+        currentUserId=userId;
+        socket.emit('join_user_room',{user_id:userId});
+        document.querySelectorAll('.user-btn').forEach(b=>{b.classList.remove('active');});
+        const btn=document.getElementById('userBtn_'+userId);
+        if(btn) btn.classList.add('active');
+        if(data.telegram_name){ const nameSpan=document.getElementById('userBtnName_'+userId); if(nameSpan) nameSpan.textContent=data.telegram_name; }
+        if(data.settings) loadSettingsToUI(data.settings);
+        addLog('🔄 تم التبديل إلى '+(PREDEFINED_USERS&&PREDEFINED_USERS[userId]?PREDEFINED_USERS[userId].name:userId),'info');
+        refreshStatus();
+    } else showToast(data.message||'فشل التبديل','error');
+}
 async function uploadImage(input){ const file=input.files[0]; if(!file) return; const formData=new FormData(); formData.append('image',file); try{ const resp=await fetch('/api/upload_image',{method:'POST',body:formData}); const data=await resp.json(); if(data.success){ savedImagePath=data.path; const reader=new FileReader(); reader.onload=e=>{ const preview=document.getElementById('imagePreview'); preview.src=e.target.result; preview.style.display='block'; document.getElementById('uploadPlaceholder').style.display='none'; }; reader.readAsDataURL(file); showSavedImageTag(); showToast(data.message,'success'); } else showToast(data.message,'error'); } catch(e){ showToast('خطأ في الرفع','error'); } }
 function showSavedImageTag(){ document.getElementById('savedImageTag').style.display='flex'; document.getElementById('savedImageName').textContent='صورة محفوظة'; }
 async function removeImage(){ const resp=await fetch('/api/remove_image',{method:'POST'}); const data=await resp.json(); if(data.success){ savedImagePath=null; document.getElementById('savedImageTag').style.display='none'; document.getElementById('imagePreview').style.display='none'; document.getElementById('uploadPlaceholder').style.display='block'; showToast('تم حذف الصورة','success'); } }
