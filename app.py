@@ -2122,7 +2122,10 @@ def api_get_login_status():
         "phone": ud.phone_number or s.get("phone", ""),
         "awaiting_code": s.get("awaiting_code", False),
         "awaiting_password": s.get("awaiting_password", False),
-        "telegram_name": ud.telegram_name or s.get("telegram_name", "")
+        "telegram_name": ud.telegram_name or s.get("telegram_name", ""),
+        "monitoring_active": ud.monitoring_active,
+        "scheduled_active": ud.scheduled_active,
+        "rotating_active": ud.rotating_active
     })
 
 @app.route("/api/get_stats")
